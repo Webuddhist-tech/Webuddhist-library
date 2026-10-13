@@ -660,10 +660,16 @@ class TestAddAnnotationSpanBounds(TestAnnotationsEndpoints):
 
         response = await client.post(
             f"/v2/editions/{edition_id}/durchens",
-            json={"span": {"start": 0, "end": 99}, "text": "Test note"},
+            json=[
+                {"span": {"start": 0, "end": 5}, "text": "Valid note"},
+                {"span": {"start": 0, "end": 99}, "text": "Invalid note"},
+            ],
         )
 
         assert response.status_code == 422
+        list_response = await client.get(f"/v2/editions/{edition_id}/durchens")
+        assert list_response.status_code == 200
+        assert list_response.json() == []
 
     async def test_post_yigchung_rejects_span_beyond_content(self, client, test_database, test_person_data):
         person_id = await self._create_test_person(test_database, test_person_data)

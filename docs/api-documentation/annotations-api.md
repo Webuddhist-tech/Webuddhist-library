@@ -25,7 +25,7 @@ X-API-Key: your_api_key
 
 ## Create and List Annotations on an Edition
 
-Annotations are created and listed by type under an edition. Each `POST` returns `{ "id": "..." }`, except Yigchung batch creation, which returns an array of ID objects.
+Annotations are created and listed by type under an edition. Durchen and Yigchung batch creation return arrays of ID objects; other `POST` endpoints return `{ "id": "..." }`.
 
 | Type | List | Create |
 |------|------|--------|
@@ -178,14 +178,29 @@ Supported types:
 - `title`
 - `author`
 
-### Create Durchen Note
+### Create Durchen Notes
 
 ```json
-{
-  "span": {"start": 100, "end": 150},
-  "text": "Variant reading found in manuscript B",
-  "metadata": {}
-}
+[
+  {
+    "span": {"start": 100, "end": 150},
+    "text": "Variant reading found in manuscript B",
+    "metadata": {}
+  },
+  {
+    "span": {"start": 300, "end": 330},
+    "text": "Second variant reading"
+  }
+]
+```
+
+The request must contain at least one item. All notes are created atomically, and the response preserves request order:
+
+```json
+[
+  {"id": "DUR123"},
+  {"id": "DUR124"}
+]
 ```
 
 ### Create Yigchung Marks
@@ -453,10 +468,16 @@ curl "https://api-l25bgmwqoa-uc.a.run.app/v2/editions/ED123/segmentations" \
 curl -X POST "https://api-l25bgmwqoa-uc.a.run.app/v2/editions/ED123/durchens" \
   -H "X-API-Key: your_api_key" \
   -H "Content-Type: application/json" \
-  -d '{
-    "span": {"start": 100, "end": 150},
-    "text": "Variant reading found in manuscript B"
-  }'
+  -d '[
+    {
+      "span": {"start": 100, "end": 150},
+      "text": "Variant reading found in manuscript B"
+    },
+    {
+      "span": {"start": 300, "end": 330},
+      "text": "Second variant reading"
+    }
+  ]'
 
 curl -X DELETE "https://api-l25bgmwqoa-uc.a.run.app/v2/durchens/DUR123" \
   -H "X-API-Key: your_api_key"

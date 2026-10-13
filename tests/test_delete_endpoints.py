@@ -422,10 +422,10 @@ class TestExistingDeleteCascades:
         bib_id = bib_response.json()["id"]
         note_response = await client.post(
             f"/v2/editions/{edition_id}/durchens",
-            json={"span": {"start": 5, "end": 10}, "text": "note"},
+            json=[{"span": {"start": 5, "end": 10}, "text": "note"}],
         )
         assert note_response.status_code == 201
-        note_id = note_response.json()["id"]
+        note_id = note_response.json()[0]["id"]
 
         response = await client.delete(f"/v2/editions/{edition_id}")
 

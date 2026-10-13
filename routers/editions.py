@@ -268,17 +268,17 @@ async def get_durchen_annotations(
 @router.post(
     "/{edition_id}/durchens",
     status_code=status.HTTP_201_CREATED,
-    summary="Add durchen annotation",
-    description="Add a durchen annotation to an edition.",
+    summary="Add durchen annotations",
+    description="Atomically add one or more durchen annotations to an edition.",
 )
-async def post_durchen_annotation(
+async def post_durchen_annotations(
     edition_id: Annotated[str, Path(description="The ID of the edition")],
-    data: NoteInput,
+    data: Annotated[list[NoteInput], Body(min_length=1)],
     _api_key: Annotated[str, Depends(get_api_key)],
     db: Annotated[Database, Depends(get_db)],
-) -> IdResponse:
-    annotation_id = await db.annotation.note.add_durchen(edition_id, data)
-    return IdResponse(id=annotation_id)
+) -> list[IdResponse]:
+    annotation_ids = await db.annotation.note.add_durchens(edition_id, data)
+    return [IdResponse(id=annotation_id) for annotation_id in annotation_ids]
 
 
 @router.get(

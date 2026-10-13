@@ -487,12 +487,16 @@ POST /v2/editions/{edition_id}/durchens
 ```
 
 ```json
-{
-  "span": {"start": 100, "end": 150},
-  "text": "Variant reading from witness B",
-  "metadata": {}
-}
+[
+  {
+    "span": {"start": 100, "end": 150},
+    "text": "Variant reading from witness B",
+    "metadata": {}
+  }
+]
 ```
+
+The array must contain at least one note. Creation is atomic and returns an array of `{ "id": "..." }` objects in request order.
 
 ## Recordings
 

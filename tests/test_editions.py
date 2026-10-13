@@ -713,22 +713,33 @@ class TestEditionAnnotations(TestEditionsEndpoints):
         text_id = await self._create_test_text(test_database, person_id)
         edition_id = await self._create_test_edition(client, text_id, "0123456789ABCDEF")
 
-        annotation_data = {
-            "span": {"start": 0, "end": 5}, "text": "Test note content",
-        }
+        annotation_data = [
+            {"span": {"start": 0, "end": 5}, "text": "First note"},
+            {"span": {"start": 8, "end": 12}, "text": "Second note"},
+        ]
 
         post_response = await client.post(f"/v2/editions/{edition_id}/durchens", json=annotation_data)
         assert post_response.status_code == 201
+        note_ids = [item["id"] for item in post_response.json()]
+        assert len(note_ids) == 2
 
         get_response = await client.get(f"/v2/editions/{edition_id}/durchens")
         assert get_response.status_code == 200
         data = get_response.json()
-        assert len(data) == 1
+        assert len(data) == 2
+        assert [item["id"] for item in data] == note_ids
         assert data[0]["edition_id"] == edition_id
         assert data[0]["text_id"] == text_id
-        assert data[0]["text"] == "Test note content"
+        assert data[0]["text"] == "First note"
         assert data[0]["span"]["start"] == 0
         assert data[0]["span"]["end"] == 5
+        assert data[1]["text"] == "Second note"
+        assert data[1]["span"] == {"start": 8, "end": 12}
+
+    async def test_post_durchen_notes_rejects_empty_array(self, client):
+        response = await client.post("/v2/editions/edition-id/durchens", json=[])
+
+        assert response.status_code == 422
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -1009,13 +1020,13 @@ class TestPatchContent(TestEditionsEndpoints):
         # Spans are now validated against the shrunken length
         accepted = await client.post(
             f"/v2/editions/{edition_id}/durchens",
-            json={"span": {"start": 0, "end": 11}, "text": "note"},
+            json=[{"span": {"start": 0, "end": 11}, "text": "note"}],
         )
         assert accepted.status_code == 201
 
         rejected = await client.post(
             f"/v2/editions/{edition_id}/durchens",
-            json={"span": {"start": 0, "end": 12}, "text": "note"},
+            json=[{"span": {"start": 0, "end": 12}, "text": "note"}],
         )
         assert rejected.status_code == 422
 

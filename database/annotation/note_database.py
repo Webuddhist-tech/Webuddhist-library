@@ -88,10 +88,14 @@ class NoteDatabase:
             return await session.execute_read(read)
 
     async def add_durchen(self, edition_id: str, note: NoteInput) -> str:
+        return (await self.add_durchens(edition_id, [note]))[0]
+
+    async def add_durchens(self, edition_id: str, notes: list[NoteInput]) -> list[str]:
+        async def add_all(tx: AsyncManagedTransaction) -> list[str]:
+            return [await NoteDatabase.add_with_transaction(tx, edition_id, note, "durchen") for note in notes]
+
         async with self._db.get_session() as session:
-            return await session.execute_write(
-                lambda tx: NoteDatabase.add_with_transaction(tx, edition_id, note, "durchen")
-            )
+            return await session.execute_write(add_all)
 
     @staticmethod
     async def add_with_transaction(
