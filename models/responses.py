@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Self
 
 from .base import OpenPechaModel
@@ -19,6 +20,11 @@ class LanguageResponse(OpenPechaModel):
 class ApplicationResponse(OpenPechaModel):
     id: str
     name: str
+
+
+class PresignedUrlResponse(OpenPechaModel):
+    url: str
+    expires_at: datetime
 
 
 class PaginatedResponse[T](OpenPechaModel):

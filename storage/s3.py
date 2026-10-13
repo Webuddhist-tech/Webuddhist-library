@@ -66,6 +66,21 @@ class Storage:
                 raise DataNotFoundError(f"File not found in S3: {key}") from e
             raise
 
+    async def generate_base_text_url(self, text_id: str, edition_id: str, expires_in: int = 3600) -> str:
+        """Generate a presigned URL for downloading base text directly from S3."""
+        key = self._base_text_path(text_id, edition_id)
+        s3 = self._client
+
+        return await s3.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket_name,
+                "Key": key,
+                "ResponseContentType": "text/plain; charset=utf-8",
+            },
+            ExpiresIn=expires_in,
+        )
+
     async def delete_base_text(self, text_id: str, edition_id: str) -> None:
         """Delete base text from S3."""
         key = self._base_text_path(text_id, edition_id)

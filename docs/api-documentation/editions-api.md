@@ -62,6 +62,26 @@ curl "https://api-l25bgmwqoa-uc.a.run.app/v2/editions/ED123/content?span_start=0
   -H "X-API-Key: your_api_key"
 ```
 
+## Get Edition Content URL
+
+```http
+GET /v2/editions/{edition_id}/content/url
+```
+
+Returns a short-lived presigned URL for downloading the complete base text directly from storage:
+
+```json
+{
+  "url": "https://bucket.s3.example/base_texts/TXT123/ED123.txt?...",
+  "expires_at": "2026-10-13T15:00:00Z"
+}
+```
+
+Fetching `url` returns the raw content as `text/plain; charset=utf-8`. Use the existing content endpoint for
+character-span requests. The URL expires after one hour and acts as a bearer credential until then, so clients
+should not log or persist it. Browser clients that fetch the URL in JavaScript require the S3 bucket's CORS policy
+to allow `GET` from the frontend origin.
+
 ## Patch Edition Content
 
 ```http

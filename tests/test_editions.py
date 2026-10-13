@@ -4,6 +4,7 @@ Integration tests for v2/editions endpoints using real Neo4j test instance.
 
 Tests endpoints:
 - GET /v2/editions/{edition_id}/content
+- GET /v2/editions/{edition_id}/content/url
 - GET /v2/editions/{edition_id}
 - POST /v2/texts/{text_id}/editions
 - POST /v2/editions/{edition_id}/segmentation
@@ -22,6 +23,7 @@ Requires environment variables:
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from identifier import generate_id
@@ -135,6 +137,27 @@ class TestGetEditionContent(TestEditionsEndpoints):
 
         assert response.status_code == 200
         assert response.json() == tibetan_content
+
+    async def test_get_content_url(self, client, test_database, test_person_data):
+        person_id = await self._create_test_person(test_database, test_person_data)
+        text_id = await self._create_test_text(test_database, person_id)
+        edition_id = await self._create_test_edition(client, text_id, "Direct download content")
+        before = datetime.now(UTC)
+
+        response = await client.get(f"/v2/editions/{edition_id}/content/url")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["url"] == (
+            f"https://mock-s3.example.com/base_texts/{text_id}/{edition_id}.txt?signed=1&expires_in=3600"
+        )
+        expires_at = datetime.fromisoformat(data["expires_at"])
+        assert before + timedelta(seconds=3600) <= expires_at <= datetime.now(UTC) + timedelta(seconds=3600)
+
+    async def test_get_content_url_for_missing_edition(self, client):
+        response = await client.get("/v2/editions/non-existent-id/content/url")
+
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio(loop_scope="session")

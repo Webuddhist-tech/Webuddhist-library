@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Path, Query, UploadFile, status
@@ -28,7 +29,7 @@ from models.edition import EditionOutput
 from models.enums import AudioFormat
 from models.recording import RecordingInput, RecordingOutput
 from models.requests import AnnotationSegmentsPaginationParams
-from models.responses import IdResponse, PaginatedResponse
+from models.responses import IdResponse, PaginatedResponse, PresignedUrlResponse
 
 if TYPE_CHECKING:
     from database import Database
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v2/editions", tags=["Editions"])
+
+CONTENT_URL_EXPIRATION_SECONDS = 3600
 
 
 @router.get(
@@ -75,6 +78,31 @@ async def get_content(
         base_text = base_text[span_start:span_end]
 
     return base_text
+
+
+@router.get(
+    "/{edition_id}/content/url",
+    summary="Get edition content URL",
+    description="Generate a short-lived presigned URL for downloading the full base text directly from storage.",
+)
+async def get_content_url(
+    edition_id: Annotated[str, Path(description="The ID of the edition")],
+    _api_key: Annotated[str, Depends(get_api_key)],
+    db: Annotated[Database, Depends(get_db)],
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> PresignedUrlResponse:
+    """Generate a direct download URL for an edition's full base text."""
+    edition = await db.edition.get(edition_id=edition_id)
+    issued_at = datetime.now(UTC)
+    url = await storage.generate_base_text_url(
+        text_id=edition.text_id,
+        edition_id=edition_id,
+        expires_in=CONTENT_URL_EXPIRATION_SECONDS,
+    )
+    return PresignedUrlResponse(
+        url=url,
+        expires_at=issued_at + timedelta(seconds=CONTENT_URL_EXPIRATION_SECONDS),
+    )
 
 
 @router.get(

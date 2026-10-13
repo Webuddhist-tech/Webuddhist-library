@@ -408,6 +408,10 @@ class MockS3Storage:
             raise TypeError(f"Expected text content for key: {key}")
         return value
 
+    async def generate_base_text_url(self, text_id: str, edition_id: str, expires_in: int = 3600) -> str:
+        key = f"base_texts/{text_id}/{edition_id}.txt"
+        return f"https://mock-s3.example.com/{key}?signed=1&expires_in={expires_in}"
+
     async def delete_base_text(self, text_id: str, edition_id: str) -> None:
         key = f"base_texts/{text_id}/{edition_id}.txt"
         if key in self._storage:
