@@ -547,6 +547,76 @@ class TestDirectSegmentRelated(SegmentTestBase):
             assert segment["edition_id"] != src_edition_id, \
                 "Related segments should exclude the queried segment's own edition"
 
+    async def test_segment_related_does_not_reenter_an_edition(self, client, test_database):
+        """Traversal must not change correspondence by leaving and re-entering an edition."""
+        person_id = await self._create_person(test_database)
+
+        root_text_id = await self._create_text(
+            test_database, person_id, title=LocalizedString({"en": "Re-entry root", "bo": "རྩ་བ།"})
+        )
+        root_edition_id = await self._create_edition(client, root_text_id, "0123456789")
+        await self._post_segmentation(client, root_edition_id, [(0, 5), (5, 10)])
+
+        parallel_text_id = await self._create_text(
+            test_database, person_id, title=LocalizedString({"en": "Re-entry parallel", "bo": "མཉམ།"})
+        )
+        parallel_edition_id = await self._create_edition(client, parallel_text_id, "ABCDEFGHIJ")
+        await self._post_segmentation(client, parallel_edition_id, [(0, 5), (5, 10)])
+
+        bridge_text_id = await self._create_text(
+            test_database, person_id, title=LocalizedString({"en": "Re-entry bridge", "bo": "འགྲེལ།"})
+        )
+        bridge_edition_id = await self._create_edition(client, bridge_text_id, "KLMNOPQRST")
+        await self._post_segmentation(client, bridge_edition_id, [(0, 10)])
+
+        downstream_text_id = await self._create_text(
+            test_database, person_id, title=LocalizedString({"en": "Re-entry downstream", "bo": "མཐའ།"})
+        )
+        downstream_edition_id = await self._create_edition(client, downstream_text_id, "UVWXYZabcd")
+        await self._post_segmentation(client, downstream_edition_id, [(0, 10)])
+
+        await self._post_alignment(
+            client,
+            root_edition_id,
+            parallel_edition_id,
+            source_segments=[(0, 5), (5, 10)],
+            target_segments=[(0, 5), (5, 10)],
+            alignment_map=[(0, [0]), (1, [1])],
+        )
+        await self._post_alignment(
+            client,
+            root_edition_id,
+            bridge_edition_id,
+            source_segments=[(0, 5), (5, 10)],
+            target_segments=[(0, 10)],
+            alignment_map=[(0, [0]), (1, [0])],
+        )
+        await self._post_alignment(
+            client,
+            parallel_edition_id,
+            downstream_edition_id,
+            source_segments=[(0, 5), (5, 10)],
+            target_segments=[(0, 10)],
+            alignment_map=[(0, [0])],
+        )
+
+        root_segment_ids = await self._get_segment_ids_from_segmentation(client, root_edition_id)
+        parallel_segment_ids = await self._get_segment_ids_from_segmentation(client, parallel_edition_id)
+        bridge_segment_ids = await self._get_segment_ids_from_segmentation(client, bridge_edition_id)
+        downstream_segment_ids = await self._get_segment_ids_from_segmentation(client, downstream_edition_id)
+
+        response = await client.get(f"/v2/segments/{root_segment_ids[0]}/related")
+        assert response.status_code == 200
+        related_ids = {segment["id"] for segment in self._related_items(response.json())}
+
+        assert related_ids == {
+            parallel_segment_ids[0],
+            bridge_segment_ids[0],
+            downstream_segment_ids[0],
+        }
+        assert root_segment_ids[1] not in related_ids
+        assert parallel_segment_ids[1] not in related_ids
+
 
 # ---------------------------------------------------------------------------
 # GET /v2/segments/{segment_id}

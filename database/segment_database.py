@@ -47,8 +47,9 @@ class SegmentDatabase:
     QUERY_DISCOVER: LiteralString = """
     UNWIND $segment_ids AS segment_id
     MATCH (:Segment {id: segment_id})-[:ALIGNED_TO]-(remote_seg:Segment)
-    RETURN DISTINCT remote_seg.id AS segment_id
-    ORDER BY segment_id
+        -[:SEGMENT_OF]->(:Segmentation)<-[:HAS_SEGMENTATION]-(remote_edition:Edition)
+    RETURN DISTINCT remote_seg.id AS segment_id, remote_edition.id AS edition_id
+    ORDER BY edition_id, segment_id
     """
 
     RESOLVE_SEGMENT_PAGE_QUERY: LiteralString = """
@@ -137,23 +138,23 @@ class SegmentDatabase:
                 return []
 
             related_segment_ids: set[str] = set()
-            visited: set[str] = set(start_segment_ids)
+            visited_editions = {edition_id}
             frontier = sorted(start_segment_ids)
 
             for _ in range(max_depth):
                 records = await (await tx.run(self.QUERY_DISCOVER, segment_ids=frontier)).data()
-                next_frontier = []
-                for record in records:
-                    segment_id = record["segment_id"]
-                    if segment_id in visited:
-                        continue
-                    visited.add(segment_id)
-                    related_segment_ids.add(segment_id)
-                    next_frontier.append(segment_id)
-
-                frontier = sorted(next_frontier)
-                if not frontier:
+                new_segment_editions = {
+                    record["segment_id"]: record["edition_id"]
+                    for record in records
+                    if record["edition_id"] not in visited_editions
+                }
+                if not new_segment_editions:
                     break
+
+                # Updating after collection preserves one-to-many alignments within this level.
+                visited_editions.update(new_segment_editions.values())
+                frontier = sorted(new_segment_editions)
+                related_segment_ids.update(frontier)
 
             if not related_segment_ids:
                 return []
