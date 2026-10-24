@@ -1,0 +1,1123 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- end standalone header -->
+<title>Webuddhist Library Field Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+Tibetan:wght@400;600&display=swap">
+<style>
+/* Layout: a field guide. Chapter rail on the left from 1040px, one ~70ch reading column, figures run wider than the text. */
+:root {
+  --paper: #F2F4F6;
+  --card: #FFFFFF;
+  --ink: #17202B;
+  --ink-2: #4E5A69;
+  --rule: #D3D9E1;
+  --code: #E7EBF0;
+  --maroon: #8A2C3B;      /* dev: what is live today */
+  --maroon-soft: #F3DEE2;
+  --saffron: #9E5A08;     /* prod: what you are building */
+  --saffron-soft: #F7E8D3;
+  --teal: #1D6B74;        /* data stores */
+  --teal-soft: #DBEEF0;
+  --indigo: #3D4A98;      /* search */
+  --indigo-soft: #E2E5F6;
+  --ok: #2E7D4F;
+
+  --display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --body: "IBM Plex Sans", "Noto Serif Tibetan", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --tibetan: "Noto Serif Tibetan", "Microsoft Himalaya", "Kailasa", serif;
+
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.1875rem;
+  --step-2: 1.5rem;
+  --step-3: 2.125rem;
+  --step-4: 3rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F131A; --card: #161C25; --ink: #E5E9EF; --ink-2: #A0AAB8; --rule: #29323F; --code: #1C232E;
+    --maroon: #E48291; --maroon-soft: #3A1D25; --saffron: #F0A54C; --saffron-soft: #3A2914;
+    --teal: #5DBFC8; --teal-soft: #12303A; --indigo: #A3ADF2; --indigo-soft: #232849; --ok: #6CC793;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F131A; --card: #161C25; --ink: #E5E9EF; --ink-2: #A0AAB8; --rule: #29323F; --code: #1C232E;
+  --maroon: #E48291; --maroon-soft: #3A1D25; --saffron: #F0A54C; --saffron-soft: #3A2914;
+  --teal: #5DBFC8; --teal-soft: #12303A; --indigo: #A3ADF2; --indigo-soft: #232849; --ok: #6CC793;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.6 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--teal); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--saffron); outline-offset: 2px; border-radius: 3px; }
+code, kbd { font-family: var(--mono); font-size: 0.88em; background: var(--code); padding: 0.08em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
+pre { margin: 0; }
+.bo { font-family: var(--tibetan); }
+
+.shell { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: 1fr; gap: 40px; padding-block: 40px 80px; }
+@media (min-width: 1040px) { .shell { grid-template-columns: 200px minmax(0, 1fr); gap: 56px; } }
+
+/* chapter rail */
+.rail { font-size: var(--step--1); }
+.rail nav { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.rail a { color: var(--ink-2); text-decoration: none; }
+.rail a:hover { color: var(--ink); }
+.rail .rail-label { font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; color: var(--ink-2); margin-bottom: 10px; }
+@media (min-width: 1040px) {
+  .rail > div { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 32px); }
+  .rail nav { flex-direction: column; gap: 9px; border-left: 1px solid var(--rule); padding-left: 14px; }
+  .rail a.on { color: var(--ink); font-weight: 600; }
+}
+
+main { min-width: 0; display: grid; gap: 72px; }
+section { display: grid; gap: 20px; min-width: 0; scroll-margin-top: 24px; }
+.prose { max-width: 70ch; display: grid; gap: 14px; }
+.prose p, .prose ul, .prose ol { margin: 0; }
+.prose ul, .prose ol { padding-left: 1.2em; display: grid; gap: 6px; }
+
+.eyebrow { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600; }
+h1 { font-family: var(--display); font-size: clamp(2.2rem, 5vw, var(--step-4)); line-height: 1.05; letter-spacing: -0.01em; }
+h2 { font-family: var(--display); font-size: var(--step-3); line-height: 1.15; }
+h3 { font-family: var(--body); font-size: var(--step-1); line-height: 1.3; }
+.lede { font-size: var(--step-1); color: var(--ink-2); max-width: 62ch; margin: 0; }
+
+/* hero */
+.hero { display: grid; gap: 22px; }
+.hero .bo-line { font-family: var(--tibetan); font-size: 1.15rem; color: var(--saffron); letter-spacing: 0.02em; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0; margin: 0; border-top: 1px solid var(--rule); }
+.facts div { padding: 14px 18px 14px 0; border-bottom: 1px solid var(--rule); min-width: 0; }
+.facts dt { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); }
+.facts dd { margin: 4px 0 0; }
+
+/* warnings */
+.alerts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.alert { background: var(--card); border: 1px solid var(--rule); border-top: 3px solid var(--maroon); border-radius: 6px; padding: 16px 18px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.alert strong { font-size: var(--step-0); }
+.alert p { margin: 0; color: var(--ink-2); font-size: 0.94rem; }
+.alert .src { font-family: var(--mono); font-size: 0.75rem; color: var(--ink-2); }
+
+/* figures */
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.fig { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 18px; overflow-x: auto; }
+.fig svg { display: block; width: 100%; height: auto; min-width: 560px; }
+.fig.narrow svg { min-width: 420px; }
+figcaption { font-size: var(--step--1); color: var(--ink-2); max-width: 80ch; }
+.pair { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); }
+.pair h3 { font-size: var(--step-0); margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; }
+.tag { font-family: var(--mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 99px; border: 1px solid currentColor; }
+.tag.dev { color: var(--maroon); }
+.tag.prod { color: var(--saffron); }
+
+/* svg vocabulary */
+svg text { font-family: var(--body); fill: var(--ink); }
+.n rect { fill: var(--card); stroke: var(--ink-2); stroke-width: 1.2; }
+.n .lbl { font-size: 14px; font-weight: 600; }
+.n .sub { font-size: 11px; fill: var(--ink-2); font-family: var(--mono); }
+.n.maroon rect { fill: var(--maroon-soft); stroke: var(--maroon); }
+.n.saffron rect { fill: var(--saffron-soft); stroke: var(--saffron); }
+.n.teal rect { fill: var(--teal-soft); stroke: var(--teal); }
+.n.indigo rect { fill: var(--indigo-soft); stroke: var(--indigo); }
+.n.ghost rect { fill: var(--paper); stroke-dasharray: 5 4; }
+.n.ghost .lbl { fill: var(--ink-2); }
+.n.group rect { fill: none; stroke: var(--rule); stroke-width: 1.5; stroke-dasharray: 2 0; }
+.n.group .lbl { font-size: 11px; font-family: var(--mono); fill: var(--ink-2); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+.n.list text.item { font-size: 12px; font-family: var(--mono); fill: var(--ink); }
+.e { stroke: var(--ink-2); stroke-width: 1.4; fill: none; }
+.e.maroon { stroke: var(--maroon); } .e.saffron { stroke: var(--saffron); } .e.teal { stroke: var(--teal); } .e.indigo { stroke: var(--indigo); }
+.e.dashed { stroke-dasharray: 5 4; }
+.e.flow { stroke-dasharray: 7 6; animation: flow 1.1s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -13; } }
+.ah { fill: var(--ink-2); } .ah.maroon { fill: var(--maroon); } .ah.saffron { fill: var(--saffron); } .ah.teal { fill: var(--teal); } .ah.indigo { fill: var(--indigo); }
+.el { font-family: var(--mono); font-size: 11px; fill: var(--ink-2); stroke: var(--card); stroke-width: 5px; paint-order: stroke; stroke-linejoin: round; }
+.note { font-family: var(--mono); font-size: 11px; fill: var(--ink-2); }
+@media (prefers-reduced-motion: reduce) { .e.flow { animation: none; } }
+
+/* request stepper */
+.stepper { display: grid; gap: 16px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+button { font: inherit; cursor: pointer; }
+.chip { border: 1px solid var(--rule); background: var(--card); color: var(--ink); padding: 7px 12px; border-radius: 99px; font-size: 0.9rem; }
+.chip[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.chip code { background: transparent; padding: 0; }
+.stage { display: grid; gap: 16px; grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 900px) { .stage { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; counter-reset: s; align-content: start; }
+.steps li { counter-increment: s; }
+.steps button { width: 100%; text-align: left; display: grid; grid-template-columns: 26px 1fr; gap: 10px; padding: 9px 12px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--ink); }
+.steps button::before { content: counter(s); font-family: var(--mono); font-size: 0.8rem; color: var(--ink-2); padding-top: 1px; }
+.steps button[aria-current="step"] { background: var(--card); border-color: var(--saffron); }
+.steps .t { font-weight: 500; }
+.steps .d { grid-column: 2; color: var(--ink-2); font-size: 0.9rem; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--ink); background: var(--ink); color: var(--paper); padding: 7px 14px; border-radius: 6px; font-size: 0.9rem; }
+.btn.quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
+.n.hot rect { stroke: var(--saffron); stroke-width: 2.4; }
+.e.hot { stroke: var(--saffron); stroke-width: 2.4; }
+.e.faint { stroke: var(--rule); }
+.dot { fill: var(--saffron); }
+.endpoint { font-family: var(--mono); font-size: 0.85rem; color: var(--ink-2); }
+
+/* span demo */
+.spans { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 20px 18px; display: grid; gap: 16px; overflow-x: auto; }
+.track { position: relative; min-width: 560px; }
+.ruler { position: relative; height: 22px; border-bottom: 1px solid var(--rule); }
+.ruler span { position: absolute; bottom: 4px; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.textrow, .barrow { position: relative; height: 44px; }
+.barrow { height: 30px; }
+.syl, .bar { position: absolute; top: 0; height: 100%; transition: left 0.7s cubic-bezier(.4,0,.2,1), width 0.7s cubic-bezier(.4,0,.2,1), opacity 0.4s; }
+.syl { display: grid; place-items: center; font-family: var(--tibetan); font-size: 1.35rem; border-left: 1px dashed var(--rule); color: var(--ink); }
+.syl.new { color: var(--saffron); background: var(--saffron-soft); }
+.bar { top: 5px; height: 20px; border-radius: 3px; display: flex; align-items: center; padding: 0 8px; font-family: var(--mono); font-size: 11px; white-space: nowrap; overflow: hidden; }
+.bar.seg { background: var(--teal-soft); border: 1px solid var(--teal); color: var(--teal); }
+.bar.mark { background: var(--maroon-soft); border: 1px solid var(--maroon); color: var(--maroon); }
+.rowlabel { font-family: var(--mono); font-size: 11px; color: var(--ink-2); margin: 6px 0 2px; }
+@media (prefers-reduced-motion: reduce) { .syl, .bar { transition: none; } }
+.result { display: grid; gap: 6px; font-size: 0.92rem; }
+.result div { display: grid; grid-template-columns: 150px 1fr; gap: 10px; }
+.result b { font-weight: 500; }
+@media (max-width: 520px) { .result div { grid-template-columns: 1fr; gap: 0; } }
+
+/* tables */
+.tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--rule); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 680px; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2); font-weight: 500; background: var(--paper); }
+tr:last-child td { border-bottom: none; }
+td code { white-space: nowrap; }
+.kind { font-family: var(--mono); font-size: 0.75rem; }
+.kind.secret { color: var(--maroon); }
+.kind.var { color: var(--teal); }
+.kind.default { color: var(--ink-2); }
+
+/* pipeline */
+.pipe-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.pipeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); counter-reset: p; }
+.pipeline li { counter-increment: p; background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; position: relative; transition: border-color 0.3s, box-shadow 0.3s; min-width: 0; }
+.pipeline li::before { content: counter(p, decimal-leading-zero) " · " attr(data-where); font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+.pipeline li.lit { border-color: var(--saffron); box-shadow: 0 0 0 3px var(--saffron-soft); }
+.pipeline li.done::after { content: "✓"; position: absolute; top: 12px; right: 14px; color: var(--ok); font-weight: 600; }
+.pipeline h3 { font-size: 1rem; }
+.pipeline p { margin: 0; font-size: 0.88rem; color: var(--ink-2); }
+.pipeline .envv { color: var(--saffron); font-weight: 600; }
+.pipeline[data-branch="dev"] .envv { color: var(--maroon); }
+.bar-progress { height: 4px; background: var(--rule); border-radius: 99px; overflow: hidden; }
+.bar-progress i { display: block; height: 100%; width: 0; background: var(--saffron); transition: width 0.5s linear; }
+.script { background: var(--code); border-radius: 8px; padding: 14px 16px; font-family: var(--mono); font-size: 0.82rem; line-height: 1.55; overflow-x: auto; white-space: pre; }
+.script .c { color: var(--ink-2); }
+
+/* checklist */
+.progress-line { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-family: var(--mono); font-size: 0.85rem; color: var(--ink-2); }
+.progress-line .bar-progress { flex: 1 1 200px; }
+.phase { display: grid; gap: 8px; }
+.phase h3 { display: flex; gap: 10px; align-items: baseline; }
+.phase h3 .count { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-2); font-weight: 400; }
+.items { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.item { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 12px; }
+.item input { margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--ok); }
+.item label { font-weight: 500; cursor: pointer; }
+.item .why { grid-column: 2; color: var(--ink-2); font-size: 0.9rem; margin: 0; }
+.item.checked label { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--rule); }
+.item .cmd { grid-column: 2; position: relative; margin-top: 6px; min-width: 0; }
+.item .cmd pre { background: var(--code); border-radius: 6px; padding: 10px 12px; padding-right: 64px; font-family: var(--mono); font-size: 0.8rem; line-height: 1.5; overflow-x: auto; }
+.copy { position: absolute; top: 6px; right: 6px; font-family: var(--mono); font-size: 0.72rem; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--rule); background: var(--card); color: var(--ink-2); }
+
+/* unknowns */
+.looks { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.look { border: 1px dashed var(--ink-2); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.look p { margin: 0; font-size: 0.9rem; color: var(--ink-2); }
+.look .where { font-family: var(--mono); font-size: 0.78rem; color: var(--ink); }
+
+.edges { display: grid; gap: 10px; max-width: 80ch; padding: 0; margin: 0; list-style: none; }
+.edges li { padding-left: 16px; border-left: 2px solid var(--rule); }
+.edges li strong { font-weight: 600; }
+
+footer { border-top: 1px solid var(--rule); padding-top: 18px; color: var(--ink-2); font-size: var(--step--1); display: grid; gap: 6px; }
+</style>
+
+<div class="shell">
+  <aside class="rail" aria-label="Chapters">
+    <div>
+      <div class="rail-label">Chapters</div>
+      <nav id="rail">
+        <a href="#now">Where things stand</a>
+        <a href="#system">System map</a>
+        <a href="#requests">How a request moves</a>
+        <a href="#data">Data model</a>
+        <a href="#spans">Text and spans</a>
+        <a href="#search">Search</a>
+        <a href="#deploy">Deploy pipeline</a>
+        <a href="#config">Configuration</a>
+        <a href="#build">Build prod</a>
+        <a href="#cutover">Cutover</a>
+        <a href="#lookup">Look up in AWS</a>
+      </nav>
+    </div>
+  </aside>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Webuddhist-library · backend field guide</div>
+      <h1>Two environments, one codebase</h1>
+      <p class="lede">How the OpenPecha API v2 backend works, how the current deployment was built, and the exact steps to stand up a second production copy from <code>main</code> while <code>dev</code> keeps serving the apps.</p>
+      <div class="bo-line" lang="bo">བྱང་ཆུབ་སེམས་དཔའ་</div>
+      <dl class="facts">
+        <div><dt>Application</dt><dd>FastAPI 0.141 on Python 3.14, run by gunicorn with 4 Uvicorn workers on port 8000</dd></div>
+        <div><dt>Data</dt><dd>Neo4j 2026.x with APOC for the graph, S3 for text and audio, Amazon OpenSearch 3.5 for search</dd></div>
+        <div><dt>Deploy</dt><dd>GitHub Actions assumes an AWS role through OIDC, then runs a script on EC2 through SSM</dd></div>
+        <div><dt>Today</dt><dd>84 deploys, all from <code>dev</code>. The last one was <code>523dc68</code> on 2026-10-20</dd></div>
+      </dl>
+      <div class="alerts" role="list">
+        <div class="alert" role="listitem">
+          <strong>Any push to main deploys to prod</strong>
+          <p>The workflow already runs on pushes to both <code>dev</code> and <code>main</code>. <code>main</code> uses a GitHub environment called <code>prod</code>, which has never been used.</p>
+          <span class="src">.github/workflows/deploy.yml:3-7, 35</span>
+        </div>
+        <div class="alert" role="listitem">
+          <strong>main cannot be merged from dev</strong>
+          <p><code>main</code> is the old Firebase backend. It has 1,101 commits and no common ancestor with <code>dev</code>, so git refuses a normal merge.</p>
+          <span class="src">git merge-base origin/main origin/dev → none</span>
+        </div>
+        <div class="alert" role="listitem">
+          <strong>ENVIRONMENT=dev turns off API keys</strong>
+          <p>With <code>ENVIRONMENT=dev</code>, every request passes without an <code>X-API-Key</code>. With any other value, every endpoint except <code>/__/health</code> requires one.</p>
+          <span class="src">dependencies.py:51</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ===================================================== NOW -->
+    <section id="now">
+      <div class="eyebrow">Chapter 1</div>
+      <h2>Where things stand</h2>
+      <div class="prose">
+        <p>The branch named <code>dev</code> is the production system today. The WeBuddhist app talks to the EC2 instance that <code>dev</code> deploys to. The goal is to have two copies: <code>dev</code> for testing and <code>main</code> for real users. You build and test the <code>main</code> copy first, then point the app at it.</p>
+      </div>
+      <div class="pair">
+        <figure>
+          <h3>Today <span class="tag dev">dev is live</span></h3>
+          <div class="fig narrow"><svg id="fig-now" viewBox="0 0 500 240" role="img" aria-label="Today: the dev branch deploys to one EC2 instance that real users call. The main branch holds old Firebase code and is not deployed."></svg></div>
+        </figure>
+        <figure>
+          <h3>Target <span class="tag prod">main is live</span></h3>
+          <div class="fig narrow"><svg id="fig-target" viewBox="0 0 500 240" role="img" aria-label="Target: dev deploys to a test EC2 used by the app's test build; main deploys to a prod EC2 used by real users; changes go from dev to main by pull request."></svg></div>
+        </figure>
+      </div>
+      <p class="prose" style="color:var(--ink-2);font-size:var(--step--1)">The repo also has about 30 feature branches. They do not trigger deploys.</p>
+    </section>
+
+    <!-- ===================================================== SYSTEM -->
+    <section id="system">
+      <div class="eyebrow">Chapter 2</div>
+      <h2>System map</h2>
+      <div class="prose">
+        <p>The backend runs as one process group on one EC2 instance. systemd keeps gunicorn running, and gunicorn runs four copies of the FastAPI app. On startup each copy connects to three AWS-side services. It does not start if <code>OPENSEARCH_ENDPOINT</code> is missing (<code>main.py:71</code>).</p>
+      </div>
+      <figure>
+        <div class="fig"><svg id="fig-system" viewBox="0 0 980 450" role="img" aria-label="Clients reach an HTTPS front door, then gunicorn on port 8000 inside an EC2 instance. The FastAPI app talks to Neo4j, S3, OpenSearch and optionally Grafana Cloud. GitHub Actions reaches the instance through the SSM agent."></svg></div>
+        <figcaption>Moving dashes are live traffic. Dashed boxes are things the repository does not describe: the HTTPS front door, because gunicorn only speaks plain HTTP on <code>:8000</code>, and Grafana, which is optional (<code>OTEL_ENABLED</code>). S3 is reached with the EC2 instance's IAM role. No AWS keys are written to <code>.env</code>.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ===================================================== REQUESTS -->
+    <section id="requests">
+      <div class="eyebrow">Chapter 3</div>
+      <h2>How a request moves</h2>
+      <div class="prose">
+        <p>Pick a request and press Play, or step through it. Every request first checks the API key against Neo4j, unless <code>ENVIRONMENT=dev</code>. Search indexing always runs after the response has been sent, as a FastAPI background task. There is no queue and no retry, so a failed index update shows up only in the logs.</p>
+      </div>
+      <div class="stepper">
+        <div class="tabs" role="group" aria-label="Request type" id="req-tabs"></div>
+        <div class="endpoint" id="req-endpoint"></div>
+        <div class="stage">
+          <div class="fig narrow"><svg id="fig-req" viewBox="0 0 760 320" role="img" aria-label="Animated request path between the app, FastAPI, a background task, Neo4j, S3 and OpenSearch."></svg></div>
+          <div style="display:grid;gap:12px;align-content:start;min-width:0">
+            <ol class="steps" id="req-steps"></ol>
+            <div class="controls">
+              <button class="btn" id="req-play" type="button">Play</button>
+              <button class="btn quiet" id="req-prev" type="button">Back</button>
+              <button class="btn quiet" id="req-next" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== DATA -->
+    <section id="data">
+      <div class="eyebrow">Chapter 4</div>
+      <h2>Data model</h2>
+      <div class="prose">
+        <p>Neo4j holds everything except the text itself and the audio. A <b>Work</b> is the abstract work. A <b>Text</b> is one language version of it. An <b>Edition</b> is a concrete witness of a Text, such as a particular printed pecha. Its characters live in S3. Every annotation points at character ranges in that S3 file through <b>Span</b> nodes.</p>
+        <p>About 70 APOC triggers check the graph's shape when a transaction commits, for example "a diplomatic edition must have exactly one pagination". A broken rule comes back from the API as <b>422</b>, and a uniqueness violation as <b>409</b> (<code>main.py:39-60</code>).</p>
+      </div>
+      <figure>
+        <div class="fig"><svg id="fig-data" viewBox="0 0 1000 500" role="img" aria-label="Graph schema: Application, Category and Tag on the left; Work, Text, Edition in the middle; Segmentation, Segment, Span and annotation nodes on the right; Contribution, Person and Nomen below; base text lives in S3."></svg></div>
+        <figcaption>Not drawn: ApiKey nodes, which store a sha256 hash and can be bound to an Application; LocalizedText under every Nomen; and the lookup nodes EditionType, LicenseType, NoteType, MarkType, RoleType and the rest. Source: <code>database/neo4j_schema.yaml</code>. <code>docs/reference/database.md</code> is out of date and still says "Manifestation".</figcaption>
+      </figure>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Thing</th><th>Where it lives</th><th>What it means</th></tr></thead>
+          <tbody>
+            <tr><td>Base text</td><td>S3 <code>base_texts/{text_id}/{edition_id}.txt</code></td><td>UTF-8. <code>Edition.content_length</code> stores its length in code points</td></tr>
+            <tr><td>Segmentation → Segment</td><td>Neo4j</td><td>At most one per edition. Segment types are paragraph, verse, title, front_matter, back_matter and top_segment. These are the units of alignment and search hits</td></tr>
+            <tr><td>Pagination → Volume → Page</td><td>Neo4j</td><td>Required for diplomatic editions. A Page has a <code>reference</code> and spans</td></tr>
+            <tr><td>Durchen</td><td>Neo4j <code>Note</code> of type <code>durchen</code></td><td>A note on variant readings, attached to spans</td></tr>
+            <tr><td>Yigchung <span class="bo" lang="bo">ཡིག་ཆུང་</span></td><td>Neo4j <code>Mark</code> of type <code>yigchung</code></td><td>A span-only mark for small-letter text</td></tr>
+            <tr><td>Alignment</td><td>Neo4j <code>Segment-[:ALIGNED_TO]->Segment</code></td><td>Links segments of two editions, matched by <code>reference</code></td></tr>
+            <tr><td>Recording audio</td><td>S3 <code>recordings/{edition_id}/{recording_id}.{ext}</code></td><td>Metadata is in Neo4j. Audio is served through a presigned URL that lasts 1 hour</td></tr>
+            <tr><td>Category, Tag</td><td>Neo4j, scoped by <code>BELONGS_TO → Application</code></td><td>Selected with the <code>X-Application</code> header. Attached to the Work, not the Text</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================================================== SPANS -->
+    <section id="spans">
+      <div class="eyebrow">Chapter 5</div>
+      <h2>Text and spans</h2>
+      <div class="prose">
+        <p>A span is a half-open range <code>[start, end)</code> of Unicode code points in the edition's base text. When someone edits the text with <code>PATCH /v2/editions/{id}/content</code>, one Neo4j transaction moves every affected span first. Then the S3 file is rewritten. If the S3 write fails, the API reverses the span change. The two stores are not updated atomically.</p>
+        <p>Segments and pages are <b>continuous</b>: they tile the text, so an insert at their end makes them grow. Notes and marks are <b>annotations</b>: an insert at their end leaves them alone. The example below shows this with four Tibetan syllables.</p>
+      </div>
+      <div class="spans">
+        <div class="controls">
+          <button class="chip" type="button" id="span-before" aria-pressed="true">Before</button>
+          <button class="chip" type="button" id="span-after" aria-pressed="false">After inserting <span class="bo" lang="bo">ཀ་</span> at offset 8</button>
+        </div>
+        <div class="track" id="span-track">
+          <div class="ruler" id="span-ruler"></div>
+          <div class="textrow" id="span-text" lang="bo"></div>
+          <div class="rowlabel">Segmentation (continuous)</div>
+          <div class="barrow" id="span-segs"></div>
+          <div class="rowlabel">Yigchung mark (annotation)</div>
+          <div class="barrow" id="span-mark"></div>
+        </div>
+        <div class="result" id="span-result" aria-live="polite"></div>
+      </div>
+      <p style="margin:0;color:var(--ink-2);font-size:var(--step--1)">The rules come from <code>docs/text-operations-spec.md</code> (insert, delete and replace tables) and are implemented in <code>database/span_database.py:250-358</code>. One exception: an insert at offset 0 expands the first span instead of shifting it.</p>
+    </section>
+
+    <!-- ===================================================== SEARCH -->
+    <section id="search">
+      <div class="eyebrow">Chapter 6</div>
+      <h2>Search</h2>
+      <div class="prose">
+        <p>One OpenSearch domain holds two indexes. On startup the app creates any index that is missing. It never changes an existing index's mapping. To pick up mapping changes, run <code>recreate-index</code> and then <code>reindex</code>.</p>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th></th><th>content-search</th><th>catalog-search</th></tr></thead>
+          <tbody>
+            <tr><td>Answers</td><td><code>GET /v2/content-search?query=…</code></td><td><code>GET /v2/texts?title=…</code> and <code>GET /v2/persons?name=…</code></td></tr>
+            <tr><td>Documents</td><td>Chunks of an edition's text, with segment ids and offsets</td><td>One per person (<code>person:{id}</code>) and one per text (<code>text:{id}</code>)</td></tr>
+            <tr><td>Analyzer</td><td><code>icu_tokenizer</code> + lowercase</td><td>BDRC <code>tibetan</code> (EWTS input, affix removal), English phonetic, IAST and Devanagari, <code>icu_folding</code></td></tr>
+            <tr><td>Plugins</td><td><code>analysis-icu</code></td><td><code>analysis-icu</code>, <code>analysis-tibetan</code> and <code>analysis-bdrc</code> (ZIPs in <code>opensearch-plugins/</code>)</td></tr>
+            <tr><td>Updated by</td><td>Creating an edition, changing its segmentation, editing its text. Deleting an edition removes its chunks right away</td><td>Creating, changing or deleting a text or person, and tag changes</td></tr>
+            <tr><td>Query</td><td><code>exact</code>: match_phrase (boost 3) or match with AND. <code>similar</code>: match_phrase with slop 12</td><td>Persons: phrase. Texts: phrase plus best_fields, <code>minimum_should_match: 3&lt;75%</code></td></tr>
+            <tr><td>Rebuild</td><td><code>python -m scripts.content_search reindex</code></td><td><code>python -m scripts.catalog_search reindex</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <figure>
+        <div class="fig"><svg id="fig-chunks" viewBox="0 0 720 150" role="img" aria-label="A 10,000-character edition is indexed as three chunks: 0 to 4,000, 3,500 to 7,500 and 7,000 to 10,000, each overlapping the next by 500 characters."></svg></div>
+        <figcaption>Content search splits each edition into 4,000-character chunks with a 500-character overlap, so a phrase that crosses a chunk boundary still matches (<code>content_search/service.py:20-21</code>). Editions without a segmentation are not indexed. Search reads only OpenSearch; it never calls Neo4j or S3.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ===================================================== DEPLOY -->
+    <section id="deploy">
+      <div class="eyebrow">Chapter 7</div>
+      <h2>Deploy pipeline</h2>
+      <div class="prose">
+        <p>One workflow file, <code>.github/workflows/deploy.yml</code>, handles both environments. The branch name picks the GitHub environment, and that environment supplies the role, the instance id and every setting. There are no SSH keys and no stored AWS keys. GitHub proves its identity to AWS through OIDC, and AWS Systems Manager runs the script on the instance.</p>
+      </div>
+      <div class="pipe-head">
+        <div class="tabs" role="group" aria-label="Branch pushed">
+          <button class="chip" type="button" id="pipe-dev" aria-pressed="true">Push to <code>dev</code></button>
+          <button class="chip" type="button" id="pipe-main" aria-pressed="false">Push to <code>main</code></button>
+        </div>
+        <button class="btn" type="button" id="pipe-play">Run the pipeline</button>
+      </div>
+      <div class="bar-progress" aria-hidden="true"><i id="pipe-bar"></i></div>
+      <ol class="pipeline" id="pipeline" data-branch="dev">
+        <li data-where="github"><h3>Push</h3><p>A push to <code>dev</code> or <code>main</code>, or a manual run (<code>workflow_dispatch</code>). Other branches do nothing.</p></li>
+        <li data-where="github · test job"><h3>Run the tests</h3><p>Ubuntu runner with Python 3.14 runs <code>pytest tests/</code>. Testcontainers start <code>neo4j:2026.07.1</code> with APOC and <code>opensearch:3.5.0</code>. This takes about 4 minutes, and deploy waits for it.</p></li>
+        <li data-where="github · deploy job"><h3>Choose the environment</h3><p>Environment <span class="envv" data-env>dev</span>. Its variables and secrets become available to the job.</p></li>
+        <li data-where="aws iam"><h3>Assume the AWS role</h3><p><code>configure-aws-credentials</code> trades the GitHub OIDC token for <code>vars.AWS_ROLE</code> in <code>vars.AWS_REGION</code>.</p></li>
+        <li data-where="github"><h3>Write the deploy script</h3><p>A bash script with a <code>.env</code> heredoc. Values are filled in from the <span class="envv" data-env>dev</span> environment.</p></li>
+        <li data-where="aws ssm"><h3>Send it to the instance</h3><p><code>aws ssm send-command</code> runs <code>AWS-RunShellScript</code> on <code>vars.EC2_INSTANCE_ID</code> and waits. If it fails, the job prints the instance's output.</p></li>
+        <li data-where="ec2 · as root"><h3>Update the code</h3><p>In <code>/opt/openpecha-backend</code>: <code>git fetch</code>, <code>checkout</code> and <code>pull</code> <span class="envv" data-branchname>dev</span>, then rewrite <code>.env</code>.</p></li>
+        <li data-where="ec2 · as root"><h3>Install and restart</h3><p>Check for <code>python3.14</code>, then reuse or recreate <code>.venv</code>, run <code>pip install -r requirements.txt</code>, <code>chown</code>, and <code>systemctl restart openpecha-api</code>. About 20 seconds.</p></li>
+      </ol>
+      <details>
+        <summary style="cursor:pointer;font-weight:500">What runs on the instance (from deploy.yml)</summary>
+        <div class="script" style="margin-top:10px"><span class="c"># runs as root through SSM, HOME=/root</span>
+cd /opt/openpecha-backend
+git config --global --add safe.directory /opt/openpecha-backend
+git fetch origin &lt;branch&gt; &amp;&amp; git checkout &lt;branch&gt; &amp;&amp; git pull origin &lt;branch&gt;
+cat &lt;&lt; 'ENV_EOF' &gt; .env        <span class="c"># NEO4J_*, AWS_*, OPENSEARCH_ENDPOINT, ENVIRONMENT, OTEL_*</span>
+…
+ENV_EOF
+command -v python3.14 || exit 1   <span class="c"># deploy fails if Python 3.14 is missing</span>
+[ -d .venv ] || python3.14 -m venv .venv
+source .venv/bin/activate &amp;&amp; pip install -r requirements.txt
+chown -R "$(stat -c '%U:%G' .)" .
+sudo systemctl restart openpecha-api   <span class="c"># unit file: openpecha-api.service in the repo</span></div>
+      </details>
+    </section>
+
+    <!-- ===================================================== CONFIG -->
+    <section id="config">
+      <div class="eyebrow">Chapter 8</div>
+      <h2>Configuration</h2>
+      <div class="prose">
+        <p>Each deploy rewrites <code>.env</code> on the instance from the GitHub environment. Change values in GitHub → Settings → Environments, not on the server. To build <code>prod</code>, open the <code>dev</code> environment next to it and go down this list.</p>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Name</th><th>Kind</th><th>Read by</th><th>For prod</th></tr></thead>
+          <tbody id="cfg-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===================================================== BUILD -->
+    <section id="build">
+      <div class="eyebrow">Chapter 9</div>
+      <h2>Build prod</h2>
+      <div class="prose">
+        <p>Work top to bottom. The order matters. Data has to exist before the indexes can be rebuilt, and everything has to be ready before <code>main</code> moves, because that push starts the first prod deploy. Your ticks are saved in this browser only. The same steps, with more detail, are in <code>docs/system-guide/prod-deployment-runbook.md</code>.</p>
+      </div>
+      <div class="progress-line"><span id="chk-count">0 of 0 done</span><div class="bar-progress"><i id="chk-bar"></i></div><button class="btn quiet" type="button" id="chk-reset">Clear ticks</button></div>
+      <div id="checklist" style="display:grid;gap:28px"></div>
+    </section>
+
+    <!-- ===================================================== CUTOVER -->
+    <section id="cutover">
+      <div class="eyebrow">Chapter 10</div>
+      <h2>Cutover</h2>
+      <div class="prose">
+        <p>Because the two branches share no history, <code>main</code> is moved, not merged. Save the old Firebase code under a new branch name. Then point <code>main</code> at the commit <code>dev</code> runs today. After that, the normal flow is a pull request from <code>dev</code> into <code>main</code>.</p>
+      </div>
+      <div class="controls">
+        <button class="chip" type="button" id="git-before" aria-pressed="true">Before</button>
+        <button class="chip" type="button" id="git-after" aria-pressed="false">After moving main</button>
+      </div>
+      <figure>
+        <div class="fig"><svg id="fig-git" viewBox="0 0 760 210" role="img" aria-label="Two unrelated commit lines. dev ends at 523dc68; main ends at ecdf248. After the move, legacy-firebase-main points at ecdf248 and main points at 523dc68."></svg></div>
+        <figcaption>Pushing <code>main</code> runs <code>deploy.yml</code> from the <em>new</em> tree, which deploys to the <code>prod</code> environment. The old Firebase workflow (<code>.github/workflows/main.yml</code>) exists only on the old <code>main</code>, so Firebase deploys from <code>main</code> stop.</figcaption>
+      </figure>
+      <ol class="prose">
+        <li>Finish chapter 9 up to the deploy step. Add yourself as a required reviewer on the <code>prod</code> environment so no deploy goes out without your approval.</li>
+        <li>Move <code>main</code>, approve the run, and check <code>GET /__/health</code> and <code>/docs</code> on the prod host.</li>
+        <li>Point a test build of the WeBuddhist app at prod. Click through reading, search, audio and one write.</li>
+        <li>Pause writes on dev, or re-copy the data (Neo4j, S3, reindex) right before the switch, so prod has everything.</li>
+        <li>Release the app with the prod URL, plus the API key if prod enforces keys.</li>
+        <li>Keep dev unchanged. To roll back, point the app at dev again. After the switch, dev's data starts to drift; it is test data from then on.</li>
+      </ol>
+    </section>
+
+    <!-- ===================================================== LOOKUP -->
+    <section id="lookup">
+      <div class="eyebrow">Chapter 11</div>
+      <h2>Look up in AWS</h2>
+      <div class="prose">
+        <p>The repository does not say how these were set up for dev. Look at the dev resources and copy their settings.</p>
+      </div>
+      <div class="looks">
+        <div class="look"><strong>HTTPS front door</strong><p>gunicorn listens on <code>0.0.0.0:8000</code> over plain HTTP. Something in front of it terminates TLS and owns the API's domain name.</p><span class="where">EC2 → Load Balancers, or nginx on the instance, plus Route 53 and ACM</span></div>
+        <div class="look"><strong>Where Neo4j runs</strong><p>Neo4j Aura or a self-hosted instance. This decides how you copy data (snapshot or <code>neo4j-admin dump</code>) and where APOC is configured.</p><span class="where">GitHub env dev → <code>NEO4J_URI</code></span></div>
+        <div class="look"><strong>Instance role and security groups</strong><p>The role on the dev instance grants S3 and SSM. Its security group lets traffic in from the front door and out to OpenSearch.</p><span class="where">EC2 → dev instance → Security, IAM role</span></div>
+        <div class="look"><strong>OpenSearch access policy</strong><p>The app connects without signing (<code>auth_mode=none</code>), so the dev domain must allow its VPC. Copy the policy exactly, or switch prod to <code>aws</code> auth.</p><span class="where">OpenSearch → os-dev → Security configuration</span></div>
+        <div class="look"><strong>Deploy role permissions</strong><p>Copy the dev role's trust policy, but limit it to <code>environment:prod</code>, and point its permissions at the prod instance.</p><span class="where">IAM → Roles → <code>vars.AWS_ROLE</code> from the dev environment</span></div>
+        <div class="look"><strong>Repo access on the instance</strong><p>The deploy runs <code>git fetch</code> as root. If the repo is private, root needs a deploy key or token on the instance.</p><span class="where">dev instance → <code>/root/.ssh</code>, <code>git remote -v</code></span></div>
+      </div>
+      <h3>Sharp edges found while reading the code</h3>
+      <ul class="edges">
+        <li><strong>Overlapping deploys.</strong> On 2026-09-28 a deploy that was still running finished after a rollback and put the wrong commit back. A <code>concurrency</code> group in <code>deploy.yml</code> would make deploys queue.</li>
+        <li><strong>Creating an edition writes S3 first.</strong> If the Neo4j step then fails, the text file stays in S3 with nothing pointing to it.</li>
+        <li><strong>Deleting an edition leaves its S3 files.</strong> <code>DELETE /v2/editions/{id}</code> removes the graph nodes and search chunks, but not the base text or audio.</li>
+        <li><strong>Constraints and triggers are not applied on startup.</strong> A new database needs <code>neo4j_constraints.cypher</code> and <code>scripts.install_neo4j_triggers</code> run by hand.</li>
+        <li><strong>The README is out of date.</strong> It says deploys happen on <code>main</code>, which was true for Firebase. Today they happen on <code>dev</code>.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <div>Written from the repository at <code>523dc68</code> (dev, 2026-10-20) and its GitHub Actions history, read on 2026-10-24. "Look up" marks facts that live only in AWS or GitHub settings.</div>
+      <div>Companion runbook: <code>docs/system-guide/prod-deployment-runbook.md</code></div>
+    </footer>
+  </main>
+</div>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const mk = (tag, attrs = {}, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+
+  function setup(svg) {
+    const defs = mk("defs", {}, svg);
+    for (const c of ["ink", "maroon", "saffron", "teal", "indigo"]) {
+      const m = mk("marker", { id: `${svg.id}-ah-${c}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
+      mk("path", { d: "M0,0 L10,5 L0,10 z", class: `ah ${c === "ink" ? "" : c}` }, m);
+    }
+    const g = { edges: mk("g", {}, svg), nodes: mk("g", {}, svg), top: mk("g", {}, svg), nodesById: {} };
+    return g;
+  }
+
+  function node(G, n) {
+    const w = n.w ?? 150, h = n.h ?? 44;
+    const g = mk("g", { class: `n ${n.kind ?? ""}` }, G.nodes);
+    mk("rect", { x: n.x, y: n.y, width: w, height: h, rx: 6 }, g);
+    if (n.kind && n.kind.includes("group")) {
+      const t = mk("text", { x: n.x + 12, y: n.y + 18, class: "lbl" }, g); t.textContent = n.label;
+    } else if (n.items) {
+      const t = mk("text", { x: n.x + 12, y: n.y + 20, class: "lbl" }, g); t.textContent = n.label;
+      n.items.forEach((it, i) => { const s = mk("text", { x: n.x + 12, y: n.y + 42 + i * 18, class: "item" }, g); s.textContent = it; });
+      g.classList.add("list");
+    } else {
+      const cy = n.y + h / 2;
+      const t = mk("text", { x: n.x + w / 2, y: n.sub ? cy - 3 : cy + 5, "text-anchor": "middle", class: "lbl" }, g); t.textContent = n.label;
+      if (n.sub) { const s = mk("text", { x: n.x + w / 2, y: cy + 14, "text-anchor": "middle", class: "sub" }, g); s.textContent = n.sub; }
+    }
+    G.nodesById[n.id] = { ...n, w, h, g };
+    return g;
+  }
+
+  // point on rect border from its centre toward (tx, ty)
+  function border(n, tx, ty) {
+    const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+    const dx = tx - cx, dy = ty - cy;
+    if (!dx && !dy) return [cx, cy];
+    const sx = dx ? (n.w / 2) / Math.abs(dx) : Infinity;
+    const sy = dy ? (n.h / 2) / Math.abs(dy) : Infinity;
+    const s = Math.min(sx, sy);
+    return [cx + dx * s, cy + dy * s];
+  }
+  const centre = n => [n.x + n.w / 2, n.y + n.h / 2];
+
+  function edge(G, a, b, o = {}) {
+    const A = G.nodesById[a], B = G.nodesById[b];
+    const [bx, by] = centre(B), [ax, ay] = centre(A);
+    const p1 = o.from ?? border(A, o.toward?.[0] ?? bx, o.toward?.[1] ?? by);
+    const p2 = o.to ?? border(B, o.fromward?.[0] ?? ax, o.fromward?.[1] ?? ay);
+    const color = o.color ?? "ink";
+    const cls = `e ${color === "ink" ? "" : color} ${o.dashed ? "dashed" : ""} ${o.flow ? "flow" : ""} ${o.cls ?? ""}`;
+    const line = mk("path", { d: o.d ?? `M${p1[0]},${p1[1]} L${p2[0]},${p2[1]}`, class: cls }, G.edges);
+    if (!o.noArrow) line.setAttribute("marker-end", `url(#${G.svg}-ah-${color})`);
+    if (o.both) line.setAttribute("marker-start", `url(#${G.svg}-ah-${color})`);
+    if (o.label) {
+      const lx = o.lx ?? (p1[0] + p2[0]) / 2, ly = o.ly ?? (p1[1] + p2[1]) / 2;
+      const t = mk("text", { x: lx, y: ly + 4, "text-anchor": o.anchor ?? "middle", class: "el" }, G.top);
+      t.textContent = o.label;
+    }
+    return line;
+  }
+  function note(G, x, y, text, anchor = "start") {
+    const t = mk("text", { x, y, class: "note", "text-anchor": anchor }, G.top); t.textContent = text; return t;
+  }
+  function graph(id) { const svg = document.getElementById(id); const G = setup(svg); G.svg = id; return G; }
+
+  /* ---------- chapter 1: now vs target ---------- */
+  {
+    const G = graph("fig-now");
+    node(G, { id: "dev", x: 20, y: 30, w: 120, label: "dev", sub: "branch", kind: "maroon" });
+    node(G, { id: "ec2", x: 190, y: 30, w: 120, label: "EC2", sub: "env: dev", kind: "maroon" });
+    node(G, { id: "app", x: 360, y: 30, w: 120, label: "WeBuddhist", sub: "real users" });
+    node(G, { id: "main", x: 20, y: 160, w: 120, label: "main", sub: "old Firebase", kind: "ghost" });
+    edge(G, "dev", "ec2", { color: "maroon", flow: true, label: "deploys", ly: 22 });
+    edge(G, "app", "ec2", { label: "API calls", ly: 22, flow: true });
+    note(G, 160, 176, "no common history with dev");
+    note(G, 160, 194, "never deployed to EC2");
+    note(G, 160, 212, "env prod: not set up yet");
+  }
+  {
+    const G = graph("fig-target");
+    node(G, { id: "dev", x: 20, y: 30, w: 120, label: "dev", sub: "testing", kind: "maroon" });
+    node(G, { id: "ec2d", x: 190, y: 30, w: 120, label: "EC2 dev", sub: "env: dev", kind: "maroon" });
+    node(G, { id: "appt", x: 360, y: 30, w: 120, label: "App test build", sub: "your team" });
+    node(G, { id: "main", x: 20, y: 160, w: 120, label: "main", sub: "production", kind: "saffron" });
+    node(G, { id: "ec2p", x: 190, y: 160, w: 120, label: "EC2 prod", sub: "env: prod", kind: "saffron" });
+    node(G, { id: "appr", x: 360, y: 160, w: 120, label: "App release", sub: "real users" });
+    edge(G, "dev", "ec2d", { color: "maroon", flow: true, label: "deploys", ly: 22 });
+    edge(G, "appt", "ec2d", { flow: true, label: "API", ly: 22 });
+    edge(G, "main", "ec2p", { color: "saffron", flow: true, label: "deploys", ly: 152 });
+    edge(G, "appr", "ec2p", { flow: true, label: "API", ly: 152 });
+    edge(G, "dev", "main", { color: "saffron", label: "PR when tested", anchor: "start", lx: 88, ly: 119 });
+  }
+
+  /* ---------- chapter 2: system map ---------- */
+  {
+    const G = graph("fig-system");
+    const svg = document.getElementById("fig-system");
+    node(G, { id: "ec2grp", x: 360, y: 20, w: 310, h: 410, label: "EC2 instance · Ubuntu · /opt/openpecha-backend", kind: "group" });
+    node(G, { id: "app", x: 20, y: 160, w: 140, h: 56, label: "WeBuddhist app", sub: "and other clients" });
+    node(G, { id: "door", x: 195, y: 160, w: 135, h: 56, label: "HTTPS front door", sub: "look up", kind: "ghost" });
+    node(G, { id: "systemd", x: 385, y: 50, w: 260, h: 50, label: "systemd: openpecha-api", sub: "Restart=always · EnvironmentFile=.env" });
+    node(G, { id: "guni", x: 385, y: 135, w: 260, h: 50, label: "gunicorn 0.0.0.0:8000", sub: "4 × UvicornWorker" });
+    node(G, { id: "api", x: 385, y: 220, w: 260, h: 56, label: "FastAPI app (main.py)", sub: "16 routers under /v2 · /docs", kind: "saffron" });
+    node(G, { id: "ssm", x: 385, y: 350, w: 260, h: 50, label: "SSM agent", sub: "runs the deploy script" });
+    node(G, { id: "gha", x: 20, y: 350, w: 140, h: 50, label: "GitHub Actions", sub: "deploy.yml" });
+    node(G, { id: "neo", x: 750, y: 20, w: 210, h: 62, label: "Neo4j + APOC", sub: "graph, spans, API keys", kind: "teal" });
+    node(G, { id: "s3", x: 750, y: 125, w: 210, h: 62, label: "S3 bucket", sub: "base texts, audio, plugin ZIPs", kind: "teal" });
+    node(G, { id: "os", x: 750, y: 230, w: 210, h: 62, label: "OpenSearch (VPC)", sub: "content-search, catalog-search", kind: "indigo" });
+    node(G, { id: "graf", x: 750, y: 345, w: 210, h: 56, label: "Grafana Cloud", sub: "OTLP traces · optional", kind: "ghost" });
+    edge(G, "app", "door", { flow: true, label: "HTTPS", ly: 150 });
+    edge(G, "door", "guni", { flow: true, label: ":8000", lx: 350, ly: 160 });
+    edge(G, "systemd", "guni", { label: "starts", anchor: "start", lx: 522, ly: 118 });
+    edge(G, "guni", "api", { label: "ASGI", anchor: "start", lx: 522, ly: 203 });
+    edge(G, "api", "neo", { color: "teal", flow: true, from: [645, 230], label: "Bolt", lx: 700, ly: 180 });
+    edge(G, "api", "s3", { color: "teal", flow: true, from: [645, 240], label: "S3 API", lx: 706, ly: 214 });
+    edge(G, "api", "os", { color: "indigo", flow: true, from: [645, 252], label: "HTTPS", lx: 706, ly: 255 });
+    edge(G, "api", "graf", { dashed: true, from: [645, 264], label: "OTLP", lx: 702, ly: 293 });
+    edge(G, "gha", "ssm", { color: "saffron", label: "ssm send-command", ly: 365 });
+    edge(G, "ssm", "api", { color: "saffron", dashed: true, label: "git pull · pip · restart", anchor: "start", lx: 522, ly: 318 });
+    void svg;
+  }
+
+  /* ---------- chapter 3: request stepper ---------- */
+  const R = graph("fig-req");
+  const reqNodes = [
+    { id: "app", x: 20, y: 130, w: 120, h: 56, label: "App", sub: "client" },
+    { id: "api", x: 220, y: 130, w: 150, h: 56, label: "FastAPI", sub: "router + db layer", kind: "saffron" },
+    { id: "bg", x: 220, y: 250, w: 150, h: 50, label: "Background task", sub: "after the response" },
+    { id: "neo", x: 540, y: 20, w: 200, h: 56, label: "Neo4j", sub: "graph", kind: "teal" },
+    { id: "s3", x: 540, y: 130, w: 200, h: 56, label: "S3", sub: "base texts, audio", kind: "teal" },
+    { id: "os", x: 540, y: 240, w: 200, h: 56, label: "OpenSearch", sub: "two indexes", kind: "indigo" },
+  ];
+  reqNodes.forEach(n => node(R, n));
+  const reqEdges = {}, reqStart = {};
+  const link = (a, b, o = {}) => {
+    const k = [a, b].sort().join("-");
+    if (!reqEdges[k]) { reqEdges[k] = edge(R, a, b, { cls: "faint", noArrow: true, ...o }); reqStart[k] = a; }
+    return reqEdges[k];
+  };
+  [["app","api"],["api","neo"],["api","s3"],["api","os"],["api","bg"],["bg","neo"],["bg","s3"],["bg","os"]].forEach(([a,b]) => link(a,b));
+  // direct download goes over FastAPI, not through it
+  link("app", "s3", { d: "M80,130 L80,100 L520,100 L520,158 L540,158" });
+  const dot = mk("circle", { r: 7, class: "dot", cx: 80, cy: 158 }, R.top);
+
+  const scenarios = [
+    { key: "create", name: "Create an edition", ep: "POST /v2/texts/{text_id}/editions",
+      steps: [
+        ["app","api","Send the edition","Body: metadata, content, and optional segmentation and pagination. Pydantic validates it."],
+        ["api","neo","Check the API key","Looks up the sha256 hash of X-API-Key. Skipped when ENVIRONMENT=dev."],
+        ["api","s3","Store the text first","put base_texts/{text_id}/{edition_id}.txt. If the graph step fails, this file is left behind."],
+        ["api","neo","One write transaction","Edition, EDITION_OF, type, segmentation, pagination, with content_length = len(content). APOC triggers check the result at commit."],
+        ["api","app","201 Created","Returns { id }. The client is done."],
+        ["api","bg","Queue indexing","FastAPI BackgroundTasks runs content_search.index_edition."],
+        ["bg","s3","Read the text back","Fetch the base text and the segments (Neo4j)."],
+        ["bg","os","Replace the chunks","Delete this edition's old chunks, then bulk-index 4,000-character chunks in batches of 100."],
+      ]},
+    { key: "edit", name: "Edit the text", ep: "PATCH /v2/editions/{id}/content",
+      steps: [
+        ["app","api","Send an operation","insert {position, text}, delete {start, end} or replace {start, end, text}."],
+        ["api","neo","Check the API key","Same check as every request."],
+        ["api","neo","Move the spans","One transaction shifts, expands, trims or deletes spans and updates content_length."],
+        ["api","s3","Rewrite the file","Read the text, change the string, write it back. If this fails, the API reverses the span change."],
+        ["api","app","200 OK","The edit is visible to readers now."],
+        ["api","bg","Queue indexing","The same background reindex as creating an edition."],
+        ["bg","os","Replace the chunks","Search catches up a moment after the response."],
+      ]},
+    { key: "search", name: "Search content", ep: "GET /v2/content-search?query=…&search_type=exact|similar",
+      steps: [
+        ["app","api","Send the query","With optional text_id and edition_id filters and a limit."],
+        ["api","neo","Check the API key","The only Neo4j call in a search."],
+        ["api","os","Query content-search","exact: match_phrase (boost 3) or match with AND. similar: match_phrase with slop 12."],
+        ["os","api","Hits come back","The app finds the exact match inside each chunk and works out which segments overlap it."],
+        ["api","app","Results","text_id, edition_id, segment_ids, match_span, context_span, score, context."],
+      ]},
+    { key: "title", name: "Find a text by title", ep: "GET /v2/texts?title=…",
+      steps: [
+        ["app","api","Send the title","Tibetan in Unicode or EWTS, Sanskrit in IAST or Devanagari, or English."],
+        ["api","neo","Check the API key","Same check as every request."],
+        ["api","os","Query catalog-search","BDRC Tibetan analyzers normalise spelling. Phrase plus best_fields matching."],
+        ["api","neo","Load the texts","Matching ids are loaded from the graph with titles, languages and contributions."],
+        ["api","app","Results","A list of texts, filtered by X-Application for tags and categories when that header is sent."],
+      ]},
+    { key: "read", name: "Download the text", ep: "GET /v2/editions/{id}/content/url",
+      steps: [
+        ["app","api","Ask for a link","Instead of streaming the text through the API."],
+        ["api","neo","Check the API key","Same check as every request."],
+        ["api","s3","Presign","generate_presigned_url for base_texts/{text}/{edition}.txt, valid for 1 hour."],
+        ["api","app","Return the URL","The URL works without AWS credentials until it expires."],
+        ["app","s3","Download directly","The bytes come from S3, not through EC2."],
+      ]},
+  ];
+  let cur = 0, step = 0, playing = null;
+  const tabs = document.getElementById("req-tabs"), list = document.getElementById("req-steps"), epEl = document.getElementById("req-endpoint");
+  scenarios.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.textContent = s.name; b.id = `req-tab-${s.key}`;
+    b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    b.addEventListener("click", () => { stop(); choose(i); });
+    tabs.appendChild(b);
+  });
+  function choose(i) {
+    cur = i; step = 0;
+    [...tabs.children].forEach((b, j) => b.setAttribute("aria-pressed", j === i ? "true" : "false"));
+    epEl.textContent = scenarios[i].ep;
+    list.innerHTML = "";
+    scenarios[i].steps.forEach((st, j) => {
+      const li = document.createElement("li");
+      const b = document.createElement("button"); b.type = "button";
+      b.innerHTML = `<span class="t"></span><span class="d"></span>`;
+      b.querySelector(".t").textContent = st[2]; b.querySelector(".d").textContent = st[3];
+      b.addEventListener("click", () => { stop(); show(j); });
+      li.appendChild(b); list.appendChild(li);
+    });
+    show(0, true);
+  }
+  let anim = null;
+  // the dot travels along the drawn edge, in the step's direction
+  function moveDot(from, to, instant) {
+    const k = [from, to].sort().join("-"), path = reqEdges[k], fwd = reqStart[k] === from;
+    const len = path.getTotalLength();
+    const at = p => { const pt = path.getPointAtLength(fwd ? p * len : (1 - p) * len); dot.setAttribute("cx", pt.x); dot.setAttribute("cy", pt.y); };
+    if (anim) cancelAnimationFrame(anim);
+    if (instant || reduce) return at(1);
+    const t0 = performance.now(), dur = 700;
+    const tick = t => {
+      const p = Math.min(1, (t - t0) / dur), e = p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+      at(e);
+      if (p < 1) anim = requestAnimationFrame(tick);
+    };
+    anim = requestAnimationFrame(tick);
+  }
+  function show(j, instant) {
+    step = j;
+    const [a, b] = scenarios[cur].steps[j];
+    Object.values(R.nodesById).forEach(n => n.g.classList.toggle("hot", n.id === a || n.id === b));
+    Object.entries(reqEdges).forEach(([k, e]) => { const on = k === [a, b].sort().join("-"); e.classList.toggle("hot", on); e.classList.toggle("faint", !on); });
+    [...list.querySelectorAll("button")].forEach((btn, i) => i === j ? btn.setAttribute("aria-current", "step") : btn.removeAttribute("aria-current"));
+    moveDot(a, b, instant);
+  }
+  function stop() { if (playing) { clearInterval(playing); playing = null; } document.getElementById("req-play").textContent = "Play"; }
+  document.getElementById("req-play").addEventListener("click", () => {
+    if (playing) return stop();
+    document.getElementById("req-play").textContent = "Pause";
+    if (step >= scenarios[cur].steps.length - 1) show(0);
+    playing = setInterval(() => {
+      if (step >= scenarios[cur].steps.length - 1) return stop();
+      show(step + 1);
+    }, 1700);
+  });
+  document.getElementById("req-next").addEventListener("click", () => { stop(); show(Math.min(step + 1, scenarios[cur].steps.length - 1)); });
+  document.getElementById("req-prev").addEventListener("click", () => { stop(); show(Math.max(step - 1, 0)); });
+  choose(0);
+
+  /* ---------- chapter 4: data model ---------- */
+  {
+    const G = graph("fig-data");
+    node(G, { id: "appn", x: 20, y: 30, w: 150, label: "Application", sub: "tenant slug" });
+    node(G, { id: "cat", x: 20, y: 150, w: 150, label: "Category", sub: "CHILD_OF tree" });
+    node(G, { id: "tag", x: 210, y: 60, w: 140, label: "Tag" });
+    node(G, { id: "work", x: 210, y: 200, w: 140, label: "Work", sub: "abstract work" });
+    node(G, { id: "text", x: 410, y: 200, w: 140, label: "Text", sub: "one language", kind: "saffron" });
+    node(G, { id: "contrib", x: 210, y: 330, w: 140, label: "Contribution", sub: "author, translator…" });
+    node(G, { id: "person", x: 20, y: 430, w: 150, label: "Person", sub: "bdrc, wiki ids" });
+    node(G, { id: "nomen", x: 410, y: 430, w: 140, label: "Nomen", sub: "multilingual label" });
+    node(G, { id: "ed", x: 620, y: 200, w: 140, label: "Edition", sub: "concrete witness", kind: "saffron" });
+    node(G, { id: "s3", x: 620, y: 60, w: 140, h: 50, label: "S3 base text", sub: "UTF-8 file", kind: "teal ghost" });
+    node(G, { id: "rec", x: 620, y: 340, w: 140, label: "Recording", sub: "audio in S3" });
+    node(G, { id: "segn", x: 830, y: 20, w: 150, label: "Segmentation", sub: "max one per edition" });
+    node(G, { id: "seg", x: 830, y: 110, w: 150, label: "Segment", sub: "ALIGNED_TO ↔ segment" });
+    node(G, { id: "span", x: 830, y: 210, w: 150, label: "Span", sub: "{start, end}", kind: "indigo" });
+    node(G, { id: "ann", x: 830, y: 310, w: 150, h: 160, label: "Annotations", items: ["Pagination›Page", "TableOfContents", "Note (durchen)", "Mark (yigchung)", "Bibliographic", "Attribute"] });
+
+    edge(G, "cat", "appn", { label: "BELONGS_TO" });
+    edge(G, "tag", "appn", { label: "BELONGS_TO", anchor: "start", lx: 178, ly: 40 });
+    edge(G, "work", "cat", { label: "HAS_CATEGORY", anchor: "start", lx: 178, ly: 160 });
+    edge(G, "work", "tag", { label: "HAS_TAG" });
+    edge(G, "text", "work", { label: "TEXT_OF", ly: 192 });
+    G.top.appendChild(mk("path", { d: "M455,200 C455,150 505,150 505,200", class: "e", "marker-end": "url(#fig-data-ah-ink)" }));
+    note(G, 480, 146, "TRANSLATION_OF | COMMENTARY_OF", "middle");
+    edge(G, "text", "contrib", { label: "HAS_CONTRIBUTION", lx: 360, ly: 296 });
+    edge(G, "contrib", "person", { label: "BY", lx: 175, ly: 405 });
+    edge(G, "text", "nomen", { label: "HAS_TITLE", anchor: "start", lx: 486, ly: 340 });
+    edge(G, "person", "nomen", { label: "HAS_NAME", ly: 446 });
+    edge(G, "ed", "text", { color: "saffron", label: "EDITION_OF", ly: 192 });
+    edge(G, "ed", "s3", { color: "teal", dashed: true, label: "content_length", anchor: "end", lx: 683, ly: 155 });
+    edge(G, "ed", "segn", { label: "HAS_SEGMENTATION", lx: 794, ly: 130, anchor: "end" });
+    edge(G, "seg", "segn", { label: "SEGMENT_OF", anchor: "start", lx: 912, ly: 98 });
+    G.top.appendChild(mk("path", { d: "M980,124 C994,124 994,146 980,146", class: "e dashed", "marker-end": "url(#fig-data-ah-ink)" }));
+    edge(G, "span", "seg", { color: "indigo", label: "SPAN_OF", anchor: "start", lx: 912, ly: 186 });
+    edge(G, "span", "ann", { color: "indigo", label: "or SPAN_OF", anchor: "start", lx: 912, ly: 286 });
+    edge(G, "ann", "ed", { label: "…_OF", lx: 796, ly: 300 });
+    edge(G, "rec", "ed", { label: "RECORDING_OF", anchor: "end", lx: 683, ly: 300 });
+  }
+
+  /* ---------- chapter 5: spans ---------- */
+  {
+    // byang chub sems dpa' (bodhisattva); offsets are Unicode code points
+    const syl = [["བྱང་", 0, 4], ["ཆུབ་", 4, 8], ["སེམས་", 8, 13], ["དཔའ་", 13, 17]];
+    const TOTAL = 19; // room for the two inserted code points
+    const pct = v => `${(v / TOTAL) * 100}%`;
+    const ruler = document.getElementById("span-ruler"), text = document.getElementById("span-text");
+    const segs = document.getElementById("span-segs"), mark = document.getElementById("span-mark"), res = document.getElementById("span-result");
+    for (let i = 0; i <= TOTAL; i++) { const s = document.createElement("span"); s.style.left = pct(i); s.textContent = i; ruler.appendChild(s); }
+    const mkSyl = ([t]) => { const d = document.createElement("div"); d.className = "syl"; d.textContent = t; text.appendChild(d); return d; };
+    const sylEls = syl.map(mkSyl);
+    const ins = mkSyl(["ཀ་"]); ins.classList.add("new");
+    const mkBar = (parent, cls) => { const d = document.createElement("div"); d.className = `bar ${cls}`; parent.appendChild(d); return d; };
+    const segA = mkBar(segs, "seg"), segB = mkBar(segs, "seg"), mk1 = mkBar(mark, "mark");
+    const place = (el, s, e) => { el.style.left = pct(s); el.style.width = pct(e - s); };
+    const states = {
+      before: { syl: [[0,4],[4,8],[8,13],[13,17]], ins: null, A: [0,8], B: [8,17], M: [4,8],
+        rows: [["Segment A", "[0, 8)  བྱང་ཆུབ་"], ["Segment B", "[8, 17)  སེམས་དཔའ་"], ["Yigchung mark", "[4, 8)  on ཆུབ་"]] },
+      after: { syl: [[0,4],[4,8],[10,15],[15,19]], ins: [8,10], A: [0,10], B: [10,19], M: [4,8],
+        rows: [["Segment A", "[0, 8) → [0, 10)  expands: the insert is at its end, and segments are continuous"], ["Segment B", "[8, 17) → [10, 19)  shifts: the insert is at its start"], ["Yigchung mark", "[4, 8)  unchanged: annotations do not grow at their end"], ["Edition", "content_length 17 → 19, then the S3 file is rewritten"]] },
+    };
+    function render(k) {
+      const st = states[k];
+      st.syl.forEach(([s, e], i) => place(sylEls[i], s, e));
+      if (st.ins) { place(ins, ...st.ins); ins.style.opacity = 1; } else { place(ins, 8, 8); ins.style.opacity = 0; }
+      place(segA, ...st.A); segA.textContent = `A [${st.A[0]}, ${st.A[1]})`;
+      place(segB, ...st.B); segB.textContent = `B [${st.B[0]}, ${st.B[1]})`;
+      place(mk1, ...st.M); mk1.textContent = `[${st.M[0]}, ${st.M[1]})`;
+      res.innerHTML = "";
+      st.rows.forEach(([a, b]) => { const d = document.createElement("div"); d.innerHTML = "<b></b><span></span>"; d.firstChild.textContent = a; d.lastChild.textContent = b; res.appendChild(d); });
+      document.getElementById("span-before").setAttribute("aria-pressed", k === "before");
+      document.getElementById("span-after").setAttribute("aria-pressed", k === "after");
+    }
+    document.getElementById("span-before").addEventListener("click", () => render("before"));
+    document.getElementById("span-after").addEventListener("click", () => render("after"));
+    render("before");
+  }
+
+  /* ---------- chapter 6: chunks ---------- */
+  {
+    const svg = document.getElementById("fig-chunks"); const G = setup(svg); G.svg = "fig-chunks";
+    const x = v => 40 + (v / 10000) * 640;
+    mk("rect", { x: x(0), y: 26, width: x(10000) - x(0), height: 14, rx: 3, style: "fill:var(--teal-soft);stroke:var(--teal)" }, G.nodes);
+    mk("text", { x: x(0), y: 18, class: "note" }, G.top).textContent = "edition base text (10,000 code points)";
+    const chunks = [[0, 4000], [3500, 7500], [7000, 10000]];
+    chunks.forEach(([s, e], i) => {
+      const y = 56 + i * 24;
+      mk("rect", { x: x(s), y, width: x(e) - x(s), height: 16, rx: 3, style: "fill:var(--indigo-soft);stroke:var(--indigo)" }, G.nodes);
+      mk("text", { x: x(s) + 8, y: y + 12, class: "note" }, G.top).textContent = `chunk:${i}  [${s.toLocaleString("en")}, ${e.toLocaleString("en")})`;
+    });
+    [[3500, 4000], [7000, 7500]].forEach(([s, e]) => mk("rect", { x: x(s), y: 50, width: x(e) - x(s), height: 76, style: "fill:var(--saffron-soft);opacity:0.8" }, G.edges));
+    mk("text", { x: x(3750), y: 47, class: "note", "text-anchor": "middle" }, G.top).textContent = "500 overlap";
+    for (let v = 0; v <= 10000; v += 2000) {
+      mk("line", { x1: x(v), x2: x(v), y1: 130, y2: 135, style: "stroke:var(--ink-2)" }, G.nodes);
+      mk("text", { x: x(v), y: 147, class: "note", "text-anchor": "middle" }, G.top).textContent = v.toLocaleString();
+    }
+  }
+
+  /* ---------- chapter 7: pipeline ---------- */
+  {
+    const pipe = document.getElementById("pipeline"), bar = document.getElementById("pipe-bar");
+    const setBranch = b => {
+      pipe.dataset.branch = b;
+      pipe.querySelectorAll("[data-env]").forEach(e => e.textContent = b === "main" ? "prod" : "dev");
+      pipe.querySelectorAll("[data-branchname]").forEach(e => e.textContent = b);
+      document.getElementById("pipe-dev").setAttribute("aria-pressed", b === "dev");
+      document.getElementById("pipe-main").setAttribute("aria-pressed", b === "main");
+    };
+    document.getElementById("pipe-dev").addEventListener("click", () => setBranch("dev"));
+    document.getElementById("pipe-main").addEventListener("click", () => setBranch("main"));
+    let timer = null;
+    document.getElementById("pipe-play").addEventListener("click", () => {
+      const items = [...pipe.children];
+      clearInterval(timer);
+      items.forEach(li => li.classList.remove("lit", "done"));
+      let i = 0; bar.style.width = "0";
+      const tick = () => {
+        if (i > 0) { items[i - 1].classList.remove("lit"); items[i - 1].classList.add("done"); }
+        if (i === items.length) { clearInterval(timer); bar.style.width = "100%"; return; }
+        items[i].classList.add("lit");
+        bar.style.width = `${((i + 1) / items.length) * 100}%`;
+        i++;
+      };
+      tick(); timer = setInterval(tick, reduce ? 250 : 800);
+    });
+  }
+
+  /* ---------- chapter 8: configuration ---------- */
+  {
+    const rows = [
+      ["AWS_ROLE", "var", "deploy job (OIDC)", "ARN of a new role whose trust policy allows only <code>environment:prod</code>"],
+      ["AWS_REGION", "var", "deploy job, app, S3, OpenSearch signing", "Same as dev (the scripts default to <code>ap-southeast-1</code>)"],
+      ["EC2_INSTANCE_ID", "var", "deploy job (SSM target)", "The prod instance <code>i-…</code>"],
+      ["NEO4J_URI", "var", "app, all scripts", "The prod Neo4j, e.g. <code>neo4j+s://…</code>"],
+      ["NEO4J_USERNAME", "var", "app, all scripts", "Prod user"],
+      ["NEO4J_PASSWORD", "secret", "app, all scripts", "Prod password"],
+      ["AWS_S3_BUCKET", "var", "app (texts, audio)", "<code>openpecha-prod</code> with versioning on"],
+      ["OPENSEARCH_ENDPOINT", "var", "app (required at startup)", "<code>https://vpc-os-prod-….es.amazonaws.com</code>"],
+      ["SEARCH_API_URL", "var", "config only (no code reads it)", "Copy from dev"],
+      ["ENVIRONMENT", "var", "API-key check, trace tags", "<code>prod</code> enforces API keys; <code>dev</code> disables them"],
+      ["OTEL_ENABLED", "var", "observability.py", "<code>true</code> to send traces"],
+      ["OTEL_SERVICE_NAME", "var", "observability.py", "<code>openpecha-api</code>"],
+      ["OTEL_EXPORTER_OTLP_ENDPOINT", "var", "OTLP exporter", "Copy from dev"],
+      ["OTEL_EXPORTER_OTLP_HEADERS", "secret", "OTLP exporter", "Copy from dev"],
+      ["NEO4J_DATABASE", "default", "app", "Not set by the workflow, so it is <code>neo4j</code>"],
+      ["OPENSEARCH_INDEX", "default", "content search", "<code>content-search</code>"],
+      ["OPENSEARCH_CATALOG_INDEX", "default", "catalog search", "<code>catalog-search</code>"],
+      ["OPENSEARCH_AUTH_MODE", "default", "both search clients", "<code>none</code>. To use it, add a line to the .env heredoc in deploy.yml (<code>aws</code> = SigV4)"],
+    ];
+    const tb = document.getElementById("cfg-rows");
+    rows.forEach(([n, k, by, prod]) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><code>${n}</code></td><td><span class="kind ${k}">${k === "default" ? "default" : k}</span></td><td>${by}</td><td>${prod}</td>`;
+      tb.appendChild(tr);
+    });
+  }
+
+  /* ---------- chapter 9: checklist ---------- */
+  {
+    const phases = [
+      ["Decide", [
+        ["d-env", "Choose ENVIRONMENT for prod", "<code>prod</code> requires an <code>X-API-Key</code> on every call, so the app needs a release that sends one. <code>dev</code> keeps today's open behaviour."],
+        ["d-fire", "Confirm nothing still uses the Firebase backend", "The old <code>main</code> deployed it on push. Moving <code>main</code> ends that."],
+      ]],
+      ["AWS", [
+        ["a-s3", "Create the prod S3 bucket with versioning", "Text rollback reads object versions (<code>storage/s3.py</code>).", "aws s3api create-bucket --bucket openpecha-prod --region ap-southeast-1 \\\n  --create-bucket-configuration LocationConstraint=ap-southeast-1\naws s3api put-bucket-versioning --bucket openpecha-prod \\\n  --versioning-configuration Status=Enabled"],
+        ["a-os", "Create OpenSearch domain os-prod", "Engine OpenSearch_3.5, VPC access, PFS TLS policy. Copy the access policy from os-dev."],
+        ["a-neo", "Create the prod Neo4j", "Same major version as dev, with APOC, triggers enabled, and Cypher 25 as the default language.", "# neo4j.conf\napoc.trigger.enabled=true\napoc.trigger.refresh=1000\ndbms.security.procedures.unrestricted=apoc.*\ndbms.security.procedures.allowlist=apoc.*\n# on the system database:\nALTER DATABASE neo4j SET DEFAULT LANGUAGE CYPHER 25"],
+        ["a-ec2", "Launch the prod EC2 instance", "Ubuntu, same size and VPC as dev. Instance role: AmazonSSMManagedInstanceCore plus S3 on the prod bucket."],
+        ["a-door", "Put HTTPS in front of port 8000", "Copy whatever dev uses. If you are starting fresh, use an ALB with an ACM certificate and a health check on <code>/__/health</code>."],
+        ["a-role", "Create the GitHub OIDC deploy role", "Trust: <code>repo:Webuddhist-tech/Webuddhist-library:environment:prod</code>. Allow: ssm:SendCommand on the instance and AWS-RunShellScript, ssm:GetCommandInvocation."],
+      ]],
+      ["Instance", [
+        ["i-py", "Install Python 3.14 and git", "The deploy exits if <code>python3.14</code> is missing.", "sudo add-apt-repository -y ppa:deadsnakes/ppa\nsudo apt-get update\nsudo apt-get install -y python3.14 python3.14-venv git"],
+        ["i-clone", "Clone the repo to /opt/openpecha-backend", "Owned by ubuntu, the service user. Root does the fetch, so a private repo needs a deploy key in /root/.ssh.", "sudo git clone https://github.com/Webuddhist-tech/Webuddhist-library.git /opt/openpecha-backend\nsudo chown -R ubuntu:ubuntu /opt/openpecha-backend"],
+        ["i-unit", "Install the systemd unit", "The unit file is in the repo.", "sudo cp /opt/openpecha-backend/openpecha-api.service /etc/systemd/system/\nsudo systemctl daemon-reload\nsudo systemctl enable openpecha-api"],
+      ]],
+      ["GitHub", [
+        ["g-env", "Create environment prod", "Settings → Environments → New environment. Allow only the <code>main</code> branch. Add yourself as a required reviewer."],
+        ["g-vars", "Fill in the variables and secrets", "Use the table in chapter 8. Copy from <code>dev</code> and change the values that differ."],
+      ]],
+      ["Data", [
+        ["s-neo", "Copy Neo4j from dev", "Use neo4j-admin dump and load on both sides, or an Aura snapshot.", "neo4j-admin database dump neo4j --to-path=/backups        # dev\nneo4j-admin database load neo4j --from-path=/backups --overwrite-destination=true   # prod"],
+        ["s-rules", "Apply constraints and triggers, then audit", "The app does not apply these itself.", "cypher-shell -a \"$NEO4J_URI\" -u \"$NEO4J_USERNAME\" -p \"$NEO4J_PASSWORD\" -f database/neo4j_constraints.cypher\npython -m scripts.install_neo4j_triggers\npython -m scripts.audit"],
+        ["s-s3", "Copy base texts and audio", "The S3 keys are built from graph ids, so copied keys match copied nodes.", "aws s3 sync s3://<DEV_BUCKET>/base_texts s3://openpecha-prod/base_texts\naws s3 sync s3://<DEV_BUCKET>/recordings s3://openpecha-prod/recordings"],
+        ["s-os", "Install search plugins and rebuild the indexes", "Indexes are built from Neo4j and S3, so do this after the two copies above.", "scripts/deploy_opensearch_plugins.sh prod\npython -m scripts.catalog_search recreate-index && python -m scripts.catalog_search reindex\npython -m scripts.content_search recreate-index && python -m scripts.content_search reindex"],
+        ["s-keys", "Create API keys (if ENVIRONMENT=prod)", "Each key is printed once. Store it in a password manager.", "python scripts/api_key.py create --name \"Master Admin Key\" --email \"<you>\"\npython scripts/api_key.py create --name \"WeBuddhist Key\" --email \"<you>\" --application webuddhist"],
+      ]],
+      ["Go live", [
+        ["l-backup", "Save the old main", "Keeps the Firebase code reachable.", "git fetch origin main dev\ngit push origin origin/main:refs/heads/legacy-firebase-main"],
+        ["l-move", "Point main at dev and approve the deploy", "Lift force-push protection on main for this one push. It starts the first prod deploy.", "git push --force-with-lease=main:ecdf248942e98180cb1cbe9b219d4f3f8b5a7f30 \\\n  origin origin/dev:refs/heads/main"],
+        ["l-check", "Check prod", "Health check, Swagger, and the service logs.", "curl -s https://<prod-host>/__/health\nsudo systemctl status openpecha-api\njournalctl -u openpecha-api -n 100"],
+        ["l-app", "Switch the app to prod", "Test build first, then the release. Keep dev running so you can roll back."],
+      ]],
+    ];
+    const KEY = "wbl-guide-checks";
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch { saved = {}; }
+    const save = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch {} };
+    const root = document.getElementById("checklist");
+    const all = [];
+    phases.forEach(([title, items]) => {
+      const sec = document.createElement("div"); sec.className = "phase";
+      const h = document.createElement("h3"); h.innerHTML = `<span></span><span class="count"></span>`; h.firstChild.textContent = title;
+      sec.appendChild(h);
+      const ul = document.createElement("ul"); ul.className = "items";
+      items.forEach(([id, label, why, cmd]) => {
+        const li = document.createElement("li"); li.className = "item";
+        li.innerHTML = `<input type="checkbox" id="chk-${id}"><label for="chk-${id}"></label><p class="why">${why}</p>`;
+        li.querySelector("label").textContent = label;
+        if (cmd) {
+          const wrap = document.createElement("div"); wrap.className = "cmd";
+          const pre = document.createElement("pre"); pre.textContent = cmd;
+          const cp = document.createElement("button"); cp.type = "button"; cp.className = "copy"; cp.textContent = "Copy";
+          cp.addEventListener("click", () => {
+            const done = () => { cp.textContent = "Copied"; setTimeout(() => cp.textContent = "Copy", 1400); };
+            const fallback = () => { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); cp.textContent = "Selected"; setTimeout(() => cp.textContent = "Copy", 1400); };
+            try { navigator.clipboard.writeText(cmd).then(done, fallback); } catch { fallback(); }
+          });
+          wrap.append(pre, cp); li.appendChild(wrap);
+        }
+        const box = li.querySelector("input");
+        box.checked = !!saved[id]; li.classList.toggle("checked", box.checked);
+        box.addEventListener("change", () => { saved[id] = box.checked; li.classList.toggle("checked", box.checked); save(); count(); });
+        all.push({ id, box, phase: h });
+        ul.appendChild(li);
+      });
+      sec.appendChild(ul); root.appendChild(sec);
+    });
+    function count() {
+      const n = all.filter(a => a.box.checked).length;
+      document.getElementById("chk-count").textContent = `${n} of ${all.length} done`;
+      document.getElementById("chk-bar").style.width = `${(n / all.length) * 100}%`;
+      const byPhase = new Map();
+      all.forEach(a => { const v = byPhase.get(a.phase) || [0, 0]; v[1]++; if (a.box.checked) v[0]++; byPhase.set(a.phase, v); });
+      byPhase.forEach(([d, t], h) => h.lastChild.textContent = `${d}/${t}`);
+    }
+    document.getElementById("chk-reset").addEventListener("click", () => { all.forEach(a => { a.box.checked = false; a.box.closest(".item").classList.remove("checked"); }); saved = {}; save(); count(); });
+    count();
+  }
+
+  /* ---------- chapter 10: git ---------- */
+  {
+    const svg = document.getElementById("fig-git"); const G = setup(svg); G.svg = "fig-git";
+    const lines = [{ y: 60, label: "dev history · FastAPI on EC2", color: "var(--maroon)", n: 8, end: "523dc68" }, { y: 150, label: "old main history · Firebase", color: "var(--ink-2)", n: 6, end: "ecdf248" }];
+    const tips = {};
+    lines.forEach((l, li) => {
+      const x0 = 60, step = 60, xs = Array.from({ length: l.n }, (_, i) => x0 + i * step);
+      mk("line", { x1: x0, x2: xs.at(-1), y1: l.y, y2: l.y, style: `stroke:${l.color};stroke-width:2` }, G.edges);
+      xs.forEach(x => mk("circle", { cx: x, cy: l.y, r: 6, style: `fill:var(--card);stroke:${l.color};stroke-width:2` }, G.nodes));
+      mk("text", { x: x0, y: l.y - 16, class: "note" }, G.top).textContent = l.label;
+      mk("text", { x: xs.at(-1), y: l.y + 24, class: "note", "text-anchor": "middle" }, G.top).textContent = l.end;
+      tips[li] = xs.at(-1);
+    });
+    note(G, 60, 110, "no common ancestor: git refuses a plain merge");
+    const pill = (text, cls) => {
+      const g = mk("g", { style: reduce ? "" : "transition: transform 0.8s cubic-bezier(.4,0,.2,1), opacity 0.6s" }, G.top);
+      const w = text.length * 7.4 + 18;
+      mk("rect", { x: 0, y: -11, width: w, height: 22, rx: 11, style: `fill:var(--${cls}-soft);stroke:var(--${cls})` }, g);
+      const t = mk("text", { x: w / 2, y: 4, "text-anchor": "middle", class: "note" }, g); t.textContent = text; t.style.fill = `var(--${cls})`;
+      return g;
+    };
+    const devP = pill("dev", "maroon"), mainP = pill("main", "saffron"), legacy = pill("legacy-firebase-main", "teal");
+    const pos = (g, x, y) => { g.style.transform = `translate(${x}px, ${y}px)`; };
+    pos(devP, tips[0] + 34, 60);
+    function render(after) {
+      pos(mainP, tips[after ? 0 : 1] + 34, after ? 92 : 150);
+      pos(legacy, tips[1] + 34, 150); legacy.style.opacity = after ? 1 : 0;
+      document.getElementById("git-before").setAttribute("aria-pressed", !after);
+      document.getElementById("git-after").setAttribute("aria-pressed", after);
+    }
+    document.getElementById("git-before").addEventListener("click", () => render(false));
+    document.getElementById("git-after").addEventListener("click", () => render(true));
+    render(false);
+  }
+
+  /* ---------- rail highlight ---------- */
+  {
+    const links = [...document.querySelectorAll("#rail a")];
+    const map = new Map(links.map(a => [a.getAttribute("href").slice(1), a]));
+    if ("IntersectionObserver" in window) {
+      const io = new IntersectionObserver(es => es.forEach(e => {
+        if (e.isIntersecting) { links.forEach(a => a.classList.remove("on")); map.get(e.target.id)?.classList.add("on"); }
+      }), { rootMargin: "-30% 0px -60% 0px" });
+      map.forEach((_, id) => { const s = document.getElementById(id); if (s) io.observe(s); });
+    }
+  }
+})();
+</script>
