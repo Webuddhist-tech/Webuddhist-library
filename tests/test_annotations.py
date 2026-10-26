@@ -1156,8 +1156,10 @@ class TestAddPagination(TestAnnotationsEndpoints):
         # Should have validation error about duplicate indexes
         assert any("unique" in str(error).lower() or "duplicate" in str(error).lower() for error in errors)
 
-    async def test_add_pagination_non_continuous_indexes_fails(self, client, test_database, test_person_data):
-        """Test that pagination creation fails when volume indexes don't form continuous sequence"""
+    async def test_add_pagination_one_volume_without_index_among_many_fails(
+        self, client, test_database, test_person_data
+    ):
+        """Test that a null index is rejected as soon as there is more than one volume"""
         person_id = await self._create_test_person(test_database, test_person_data)
         text_id = await self._create_test_text(test_database, person_id)
         edition_id = await self._create_test_edition(
@@ -1166,27 +1168,53 @@ class TestAddPagination(TestAnnotationsEndpoints):
 
         pagination_data = {
             "volumes": [
-                {
-                    "index": 1,
-                    "pages": [
-                        {"reference": "1a", "lines": [{"start": 0, "end": 8}]},
-                    ]
-                },
-                {
-                    "index": 3,  # Missing index 2 - not continuous
-                    "pages": [
-                        {"reference": "3a", "lines": [{"start": 0, "end": 10}]},
-                    ]
-                }
+                {"index": 34, "pages": [{"reference": "F.1.a", "lines": [{"start": 0, "end": 8}]}]},
+                {"index": None, "pages": [{"reference": "F.1.b", "lines": [{"start": 8, "end": 16}]}]},
             ]
         }
 
         response = await client.post(f"/v2/editions/{edition_id}/pagination", json=pagination_data)
         assert response.status_code == 422
-        errors = response.json()["detail"]
-        
-        # Should have validation error about non-continuous sequence
-        assert any("continuous" in str(error).lower() or "sequence" in str(error).lower() for error in errors)
+        assert any("multiple volumes must have indexes" in str(error) for error in response.json()["detail"])
+
+    async def test_add_pagination_non_continuous_indexes_succeeds(self, client, test_database, test_person_data):
+        """Test that volume indexes may skip numbers, since they are volume numbers in the source collection"""
+        person_id = await self._create_test_person(test_database, test_person_data)
+        text_id = await self._create_test_text(test_database, person_id)
+        edition_id = await self._create_test_edition(
+            test_database, text_id, "0123456789ABCDEF", edition_type=EditionType.CRITICAL
+        )
+
+        pagination_data = {
+            "volumes": [
+                {"index": 35, "pages": [{"reference": "F.1.a", "lines": [{"start": 8, "end": 16}]}]},
+                {"index": 32, "pages": [{"reference": "F.146.a", "lines": [{"start": 0, "end": 8}]}]},
+            ]
+        }
+
+        response = await client.post(f"/v2/editions/{edition_id}/pagination", json=pagination_data)
+        assert response.status_code == 201, response.json()
+
+        data = (await client.get(f"/v2/paginations/{response.json()['id']}")).json()
+        assert [volume["index"] for volume in data["volumes"]] == [32, 35]
+
+    async def test_add_pagination_single_volume_with_index_succeeds(self, client, test_database, test_person_data):
+        """Test that a text found in one volume of a larger collection keeps that volume's number"""
+        person_id = await self._create_test_person(test_database, test_person_data)
+        text_id = await self._create_test_text(test_database, person_id)
+        edition_id = await self._create_test_edition(
+            test_database, text_id, "0123456789ABCDEF", edition_type=EditionType.CRITICAL
+        )
+
+        pagination_data = {
+            "volumes": [{"index": 34, "pages": [{"reference": "F.144.b", "lines": [{"start": 0, "end": 8}]}]}]
+        }
+
+        response = await client.post(f"/v2/editions/{edition_id}/pagination", json=pagination_data)
+        assert response.status_code == 201, response.json()
+
+        data = (await client.get(f"/v2/paginations/{response.json()['id']}")).json()
+        assert data["volumes"][0]["index"] == 34
 
     async def test_add_pagination_single_volume_without_index_succeeds(self, client, test_database, test_person_data):
         """Test that single volume without index succeeds (defaults to 0)"""

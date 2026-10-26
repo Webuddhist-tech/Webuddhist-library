@@ -97,6 +97,7 @@ If one source segment aligns to multiple target segments, repeat the `source_seg
 {
   "volumes": [
     {
+      "index": 34,
       "pages": [
         {
           "reference": "1a",
@@ -111,7 +112,7 @@ If one source segment aligns to multiple target segments, repeat the `source_seg
 }
 ```
 
-Single-volume pagination omits `index`. Multi-volume pagination requires unique continuous indexes starting at `1`.
+`index` is the volume number in the source collection (for example `34` for Degé Kangyur vol. 34). A single-volume pagination may set `index` to `null` or omit it, meaning the text has only ever had one volume. Multi-volume pagination requires an `index` on every volume, and indexes must be unique; they do not need to start at `1` or be continuous.
 
 ### Create table of contents
 
@@ -338,6 +339,7 @@ Response:
   "text_id": "TXT123",
   "volumes": [
     {
+      "index": 34,
       "pages": [
         {
           "reference": "1a",

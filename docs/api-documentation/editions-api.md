@@ -192,6 +192,7 @@ Diplomatic request:
   "pagination": {
     "volumes": [
       {
+        "index": 34,
         "pages": [
           {
             "reference": "1a",
@@ -287,8 +288,9 @@ Wherever spans appear as a list, that list must follow one of three layouts:
 | `segments` within a segmentation | sorted by `start`; segments may overlap |
 
 Two rules are not about layout. A table of contents subsection must sit inside its parent's span, and
-volume indexes must form a continuous sequence from `1`. Content patch operations are the one place
-where an empty range is refused, because deleting or replacing zero characters does nothing.
+volume indexes must be unique, with `null` allowed only for a single volume. Content patch operations
+are the one place where an empty range is refused, because deleting or replacing zero characters does
+nothing.
 
 ## Edition Annotation Collections
 
@@ -385,6 +387,7 @@ POST /v2/editions/{edition_id}/pagination
 {
   "volumes": [
     {
+      "index": 34,
       "pages": [
         {
           "reference": "1a",
@@ -398,12 +401,16 @@ POST /v2/editions/{edition_id}/pagination
 }
 ```
 
-A single-volume pagination must omit `index`. Multi-volume pagination must use unique continuous indexes starting at `1`.
+`index` is the volume number in the source collection, for example `34` for a text in Degé Kangyur
+vol. 34. A pagination with a single volume may set `index` to `null` or omit it, meaning the text has
+only ever had one volume. With more than one volume, every volume must set `index`, and each index may
+appear only once; otherwise the request is rejected with `422`. Indexes do not need to start at `1` or
+be continuous, so a text spanning vols. 34–35 uses indexes `34` and `35`.
 
 Page offsets are positions in the edition's single base text, not per-volume positions, so volumes
 carve up that text between them. Each volume must therefore start at or after the previous volume
 ends, and a pagination whose volumes overlap or run counter to their index order is rejected with
-`422`. Adjacent volumes are fine: volume 2 may start exactly where volume 1 ends.
+`422`. Adjacent volumes are fine: volume 35 may start exactly where volume 34 ends.
 
 A folio with no text is a page whose single line is empty at the position where the folio sits, for
 example `{"reference": "1b", "lines": [{"start": 8, "end": 8}]}` between a page ending at `8` and the

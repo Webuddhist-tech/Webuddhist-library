@@ -134,7 +134,7 @@ class Page(LinesModel):
 class Volume(OpenPechaModel):
     model_config = ConfigDict(extra="forbid", json_schema_mode_override="validation")
 
-    index: int | None = Field(default=None, ge=1, description="Volume index (1-based)")
+    index: int | None = Field(default=None, ge=1, description="Volume number in the source collection")
     pages: list[Page] = Field(min_length=1)
     metadata: AnnotationMetadata | None = None
 
@@ -161,17 +161,12 @@ class PaginationInput(PaginationBase):
     @model_validator(mode="after")
     def validate_volume_indexes(self) -> Self:
         if len(self.volumes) == 1:
-            if self.volumes[0].index is not None:
-                raise ValueError("single volume must have index=None")
-        else:
-            indexes = [volume.index for volume in self.volumes]
-            if any(index is None for index in indexes):
-                raise ValueError("multiple volumes must have indexes")
-            if len(set(indexes)) != len(indexes):
-                raise ValueError("volume indexes must be unique")
-            sorted_indexes = sorted([i for i in indexes if i is not None])
-            if sorted_indexes != list(range(1, len(indexes) + 1)):
-                raise ValueError("volume indexes must form a continuous sequence starting from 1")
+            return self
+        indexes = [volume.index for volume in self.volumes]
+        if None in indexes:
+            raise ValueError("multiple volumes must have indexes")
+        if len(set(indexes)) != len(indexes):
+            raise ValueError("volume indexes must be unique")
         return self
 
     @model_validator(mode="after")
