@@ -9,6 +9,12 @@ SYSTEM_DATABASE_NAME = "system"
 
 RETIRED_TRIGGERS = ("enforce_span_start_lt_end",)
 
+# APOC stores each trigger statement pinned to the Cypher version of the install call. That call runs on
+# the system database, which follows the server's db.query.default_language (CYPHER 5 on our servers),
+# not the neo4j database's DEFAULT LANGUAGE. Pin the version explicitly: the statements use CYPHER 25
+# functions such as string.join.
+TRIGGER_CYPHER_VERSION = "CYPHER 25"
+
 # Each trigger is a dict with:
 #   name: unique trigger name
 #   query: Cypher to execute on each transaction
@@ -1086,7 +1092,7 @@ async def install_triggers(driver: AsyncDriver) -> None:
                 "CALL apoc.trigger.install($database, $name, $statement, {phase: $phase})",
                 database=DATABASE_NAME,
                 name=trigger["name"],
-                statement=trigger["query"],
+                statement=f"{TRIGGER_CYPHER_VERSION} {trigger['query']}",
                 phase=trigger["phase"],
             )
             logger.info("Installed trigger: %s — %s", trigger["name"], trigger["description"])

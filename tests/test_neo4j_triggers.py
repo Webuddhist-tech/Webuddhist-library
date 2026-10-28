@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from database.neo4j_triggers import TRIGGERS
+from database.neo4j_triggers import DATABASE_NAME, SYSTEM_DATABASE_NAME, TRIGGER_CYPHER_VERSION, TRIGGERS
 
 
 @dataclass(frozen=True)
@@ -254,3 +254,25 @@ async def test_each_trigger_rejects_intentional_invalid_data(test_database, case
             result = await session.run(query, trigger_query=TRIGGER_QUERY_BY_NAME[case.name])
             await result.consume()
 
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_installed_triggers_are_pinned_to_cypher_25(test_database) -> None:
+    """The test server defaults to CYPHER 5, like real servers, so an unpinned trigger would be stored as CYPHER 5."""
+    async with test_database._driver.session(database=SYSTEM_DATABASE_NAME) as session:
+        result = await session.run("CALL apoc.trigger.show($database) YIELD name, query", database=DATABASE_NAME)
+        stored = {record["name"]: record["query"] async for record in result}
+
+    assert set(stored) == {trigger["name"] for trigger in TRIGGERS}
+    not_pinned = sorted(name for name, query in stored.items() if not query.startswith(TRIGGER_CYPHER_VERSION + " "))
+    assert not not_pinned, f"Triggers not stored as {TRIGGER_CYPHER_VERSION}: {not_pinned}"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_write_succeeds_with_triggers_installed(test_database) -> None:
+    """Every write runs every trigger, so one trigger that fails to compile fails all writes."""
+    async with test_database.get_session() as session:
+        await (await session.run("CREATE (:Language {code: 'pi', name: 'Pali'})")).consume()
+        record = await (await session.run("MATCH (l:Language {code: 'pi'}) RETURN count(l) AS n")).single()
+
+    assert record is not None
+    assert record["n"] == 1
