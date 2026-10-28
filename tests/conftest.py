@@ -156,6 +156,8 @@ def _neo4j_container():
         .with_env("NEO4J_PLUGINS", '["apoc"]')
         .with_env("NEO4J_apoc_trigger_enabled", "true")
         .with_env("NEO4J_apoc_trigger_refresh", "1000")
+        # The image defaults the whole server to CYPHER 25; real servers default to CYPHER 5.
+        .with_env("NEO4J_db_query_default__language", "CYPHER_5")
         .with_env("NEO4J_dbms_security_procedures_unrestricted", "apoc.*")
         .with_env("NEO4J_dbms_security_procedures_allowlist", "apoc.*")
     )
