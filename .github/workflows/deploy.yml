@@ -49,9 +49,9 @@ jobs:
           #!/bin/bash
           set -e
           export HOME=/root
-          cd /opt/openpecha-backend || exit 1
+          cd ${{ vars.APP_DIR || '/opt/openpecha-backend' }} || exit 1
 
-          git config --global --add safe.directory /opt/openpecha-backend
+          git config --global --add safe.directory ${{ vars.APP_DIR || '/opt/openpecha-backend' }}
 
           git fetch origin ${{ github.ref_name }}
           git checkout ${{ github.ref_name }}
@@ -93,7 +93,7 @@ jobs:
           OWNER=$(stat -c '%U:%G' .)
           chown -R "$OWNER" .
 
-          sudo systemctl restart openpecha-api
+          sudo systemctl restart ${{ vars.SERVICE_NAME || 'openpecha-api' }}
           EOF
 
       - name: Execute via SSM
