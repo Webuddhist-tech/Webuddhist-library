@@ -6,6 +6,7 @@ Tests cover:
 - Master keys (no application binding) accept any X-Application header
 - App-bound keys validate X-Application header matches
 - App-bound keys reject mismatched X-Application header
+- App-bound keys accept requests without an X-Application header
 - Missing API key returns 401
 - Invalid API key returns 401
 - API key CRUD operations (create, validate, revoke, rotate, list)
@@ -228,3 +229,12 @@ class TestApiKeyAuthMiddlewareWithKeys:
         )
 
         assert response.status_code in (401, 403)
+
+    async def test_app_bound_key_accepts_missing_application(self, auth_client, test_database):
+        """Test app-bound key works on routes where X-Application is optional and not sent."""
+        key_id = generate_id()
+        _, raw_key = await test_database.api_key.create(key_id, "App Key", "app@example.com", "test_application")
+
+        response = await auth_client.get("/v2/languages", headers={"X-API-Key": raw_key})
+
+        assert response.status_code == 200
