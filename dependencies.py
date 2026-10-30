@@ -66,10 +66,12 @@ async def get_api_key(
 
     request.state.api_key_info = result
 
+    # A bound key already names its application, so a missing X-Application is
+    # accepted; only a different application is rejected.
     bound_application_id = result.get("bound_application_id")
     if bound_application_id is not None:
         x_application = request.headers.get(APPLICATION_HEADER)
-        if x_application != bound_application_id:
+        if x_application is not None and x_application != bound_application_id:
             logger.warning(
                 "API key application mismatch: key bound to %s, request for %s",
                 bound_application_id,
