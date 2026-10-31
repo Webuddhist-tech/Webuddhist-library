@@ -8,6 +8,7 @@ A recording is an audio reading of an edition. The metadata lives in Neo4j and t
 - **Upload**: Audio is submitted as `multipart/form-data` in the same request that creates the metadata, so a recording never exists without its file.
 - **Format**: Derived from the upload's content type, not from the filename. Supported formats are `mp3`, `wav`, `m4a`, `ogg`, and `flac`.
 - **Playback**: The audio endpoint redirects to a short-lived presigned storage URL rather than proxying bytes, so players get range requests and seeking directly from storage.
+- **Cues**: Optional time ranges of the audio, each mapped to the span of base text being recited during it, so a client can highlight the text as it is read. A span can be any length, from a verse down to a single syllable.
 
 ## Authentication
 
@@ -181,11 +182,82 @@ Deletes the recording and its stored audio file, returning `204 No Content`.
 
 Delete behavior:
 
-- Deletes the `Recording` node, its `Contribution` nodes, and its title `Nomen` and `LocalizedText` subgraph.
+- Deletes the `Recording` node, its `Contribution` nodes, its cues, and its title `Nomen` and `LocalizedText` subgraph.
 - Deletes the audio object from storage. This is the one place the API removes a stored file.
 - Does not delete the parent `Edition`, the narrating `Person` or `AI`, or lookup nodes such as `RoleType`, `LicenseType`, and `Language`.
 
 Deleting the parent edition cascade-deletes its recordings' database rows along with the rest of its annotations, but leaves their audio objects in storage, matching how edition deletion already treats base text.
+
+## Recording Cues
+
+A cue says that, between `start_ms` and `end_ms` of the audio, the narrator is reciting the base text in `span`. Spans use the same Unicode code point offsets into the edition content as every other annotation.
+
+### Get Cues
+
+```http
+GET /v2/recordings/{recording_id}/cues
+```
+
+Returns every cue of the recording, ordered by `start_ms`, without pagination. A recording with no cues returns `[]`; `404` means the recording does not exist.
+
+```json
+[
+  {"span": {"start": 0, "end": 42}, "start_ms": 0, "end_ms": 4200},
+  {"span": {"start": 42, "end": 97}, "start_ms": 4200, "end_ms": 9100}
+]
+```
+
+### Replace Cues
+
+```http
+PUT /v2/recordings/{recording_id}/cues
+```
+
+Replaces all cues of the recording and returns `204 No Content`. The request body is the array of cues, in the same shape `GET` returns.
+
+```json
+[
+  {"span": {"start": 0, "end": 42}, "start_ms": 0, "end_ms": 4200},
+  {"span": {"start": 42, "end": 97}, "start_ms": 4200, "end_ms": 9100}
+]
+```
+
+Validation rules:
+
+- The array must contain at least one cue. Use `DELETE` to remove all cues.
+- `start_ms` must be less than `end_ms`.
+- A span must cover at least one character and must lie within the edition content.
+- Cues must be sorted by time and must not overlap in time. Gaps between cues are allowed.
+- The same span may appear in several cues, which is how a refrain recited more than once is expressed.
+
+Error responses:
+
+- `404 Not Found`: Recording does not exist.
+- `422 Validation Error`: Any of the rules above is violated.
+
+### Delete Cues
+
+```http
+DELETE /v2/recordings/{recording_id}/cues
+```
+
+Deletes all cues of the recording and returns `204 No Content`. The recording and its audio are untouched.
+
+### Content edits
+
+Cue spans follow `PATCH /v2/editions/{edition_id}/content` with the same rules as notes. Only the span moves; the audio times never change.
+
+- An edit before a cue shifts its span, so it keeps covering the same recited text. An edit after it leaves it unchanged.
+- An insert, delete, or replace strictly inside a span resizes the span to cover the edited text.
+- A delete or replace that covers the whole span deletes the cue. That stretch of audio then has no highlight.
+- A delete that overlaps one end of a span trims the span to the text that remains. A replace does the same, except that a replace overlapping the end of the span keeps the replacement text inside it.
+
+### Client playback
+
+1. Fetch the edition's base text, for example through `GET /v2/editions/{edition_id}/content/url`.
+2. Fetch the cues with `GET /v2/recordings/{recording_id}/cues`.
+3. Play the audio from `GET /v2/recordings/{recording_id}/audio`.
+4. On each time update, binary-search the cues by `start_ms` and highlight `content[span.start:span.end]` for the cue containing the current time. This works because cues are sorted and do not overlap.
 
 ## Developer Notes
 
@@ -193,4 +265,5 @@ Deleting the parent edition cascade-deletes its recordings' database rows along 
 - Models: `models/recording.py` and `models/contribution.py`.
 - Database: `database/recording_database.py`, with the shared `Contribution` queries in `database/contribution_database.py`.
 - Storage: `storage/s3.py` stores audio under `recordings/{edition_id}/{recording_id}.{format}`.
-- Timed alignment between a recording and the segments it reads is not implemented. A recording is a node in its own right, so timings can be attached later without reshaping recordings; follow the `models/alignment.py` conventions if that is added.
+- Cues are stored as `(:Span)-[:SPAN_OF]->(:Cue {start_ms, end_ms})-[:CUE_OF]->(:Recording)`. `Cue` has no `id`, because cues are only written and read in bulk.
+- `database/span_database.py` adjusts cue spans with the annotation rules, and deletes a `Cue` once its span is deleted.

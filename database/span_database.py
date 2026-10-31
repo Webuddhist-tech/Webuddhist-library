@@ -193,6 +193,12 @@ class SpanDatabase:
             <-[:SECTION_OF]-(entity:TableOfContentsSection)
             <-[:SPAN_OF]-(span:Span)
         RETURN elementId(span) AS span_id, span.start AS span_start, span.end AS span_end
+        UNION ALL
+        MATCH (m:Edition {id: $edition_id})
+            <-[:RECORDING_OF]-(:Recording)
+            <-[:CUE_OF]-(entity:Cue)
+            <-[:SPAN_OF]-(span:Span)
+        RETURN elementId(span) AS span_id, span.start AS span_start, span.end AS span_end
     }
     RETURN span_id, span_start, span_end
     ORDER BY span_start
@@ -209,7 +215,7 @@ class SpanDatabase:
     BATCH_DELETE_SPANS_QUERY: LiteralString = """
     UNWIND $span_ids AS span_id
     MATCH (span:Span)-[:SPAN_OF]->(
-        entity:Segment|Page|BibliographicMetadata|Note|Mark|Attribute|TableOfContentsSection
+        entity:Segment|Page|BibliographicMetadata|Note|Mark|Attribute|TableOfContentsSection|Cue
     )
     WHERE elementId(span) = span_id
     DETACH DELETE span

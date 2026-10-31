@@ -249,6 +249,20 @@ nodes:
         cardinality: many
         required: true
 
+  Cue:
+    properties:
+      start_ms:
+        type: integer
+        required: true
+      end_ms:
+        type: integer
+        required: true
+    relationships:
+      CUE_OF:
+        target: Recording
+        cardinality: one
+        required: true
+
   Source:
     properties:
       name:
@@ -310,7 +324,7 @@ nodes:
         required: true
     relationships:
       SPAN_OF:
-        target: Segment | BibliographicMetadata | Note | Mark | Attribute | Page | TableOfContentsSection
+        target: Segment | BibliographicMetadata | Note | Mark | Attribute | Page | TableOfContentsSection | Cue
         cardinality: one
         required: true
 

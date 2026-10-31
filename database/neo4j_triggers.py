@@ -432,7 +432,7 @@ TRIGGERS.append(
         "name": "enforce_span_span_of",
         "description": (
             "Every Span must have SPAN_OF to one of: Segment, BibliographicMetadata, Note, Mark, Attribute, Page, "
-            "TableOfContentsSection"
+            "TableOfContentsSection, Cue"
         ),
         "phase": "before",
         "query": """
@@ -450,7 +450,7 @@ TRIGGERS.append(
         WITH DISTINCT node
         WHERE NOT (node IN $deletedNodes)
           AND NOT (node)-[:SPAN_OF]->(
-            :Segment|BibliographicMetadata|Note|Mark|Attribute|Page|TableOfContentsSection
+            :Segment|BibliographicMetadata|Note|Mark|Attribute|Page|TableOfContentsSection|Cue
         )
         WITH collect(coalesce(toString(node.start), 'unknown')) AS ids
         WHERE size(ids) > 0
@@ -464,7 +464,7 @@ TRIGGERS.append(
         "audit": """
         MATCH (s:Span)
         WHERE NOT (s)-[:SPAN_OF]->(
-            :Segment|BibliographicMetadata|Note|Mark|Attribute|Page|TableOfContentsSection
+            :Segment|BibliographicMetadata|Note|Mark|Attribute|Page|TableOfContentsSection|Cue
         )
         RETURN toString(s.start) + '-' + toString(s.end) AS violating_id
     """,
@@ -702,6 +702,46 @@ TRIGGERS.append(
         MATCH (r:Recording)-[:HAS_CONTRIBUTION]->(:Contribution)-[:WITH_ROLE]->(rt:RoleType)
         WHERE rt.name <> 'narrator'
         RETURN r.id AS violating_id
+    """,
+    }
+)
+
+# =========================================================================
+# Cue
+# =========================================================================
+TRIGGERS.extend(
+    _required_rel_trigger(
+        "enforce_cue_cue_of",
+        "Every Cue must have CUE_OF->Recording",
+        "Cue",
+        "CUE_OF",
+        "Recording",
+    )
+)
+TRIGGERS.append(
+    {
+        "name": "enforce_cue_start_ms_lt_end_ms",
+        "description": "Cue.start_ms must be less than Cue.end_ms",
+        "phase": "before",
+        "query": """
+        UNWIND $createdNodes AS node
+        WITH node
+        WHERE node:Cue
+        WITH node
+        WHERE node.start_ms >= node.end_ms
+        WITH collect(toString(node.start_ms) + '-' + toString(node.end_ms)) AS ids
+        WHERE size(ids) > 0
+        CALL apoc.util.validate(
+            true,
+            'enforce_cue_start_ms_lt_end_ms: Cue.start_ms must be < Cue.end_ms. Cues: %s',
+            [string.join(ids, ', ')]
+        )
+        RETURN null
+    """,
+        "audit": """
+        MATCH (t:Cue)
+        WHERE t.start_ms >= t.end_ms
+        RETURN toString(t.start_ms) + '-' + toString(t.end_ms) AS violating_id
     """,
     }
 )

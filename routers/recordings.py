@@ -1,11 +1,11 @@
 import logging
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Body, Depends, Path, status
 from fastapi.responses import RedirectResponse
 
 from dependencies import get_api_key, get_db, get_storage
-from models.recording import RecordingOutput, RecordingPatch
+from models.recording import RecordingCue, RecordingCues, RecordingOutput, RecordingPatch
 
 if TYPE_CHECKING:
     from database import Database
@@ -52,6 +52,49 @@ async def get_recording_audio(
         extension=audio_format.value,
     )
     return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.get(
+    "/{recording_id}/cues",
+    summary="Get recording cues",
+    description="Retrieve every cue of a recording, ordered by start time.",
+)
+async def get_recording_cues(
+    recording_id: Annotated[str, Path(description="The ID of the recording")],
+    _api_key: Annotated[str, Depends(get_api_key)],
+    db: Annotated[Database, Depends(get_db)],
+) -> list[RecordingCue]:
+    return await db.recording.get_cues(recording_id)
+
+
+@router.put(
+    "/{recording_id}/cues",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Replace recording cues",
+    description="Replace all cues of a recording.",
+)
+async def replace_recording_cues(
+    recording_id: Annotated[str, Path(description="The ID of the recording")],
+    data: Annotated[RecordingCues, Body(min_length=1)],
+    _api_key: Annotated[str, Depends(get_api_key)],
+    db: Annotated[Database, Depends(get_db)],
+) -> None:
+    logger.info("Replacing %d cues for recording %s", len(data), recording_id)
+    await db.recording.replace_cues(recording_id, data)
+
+
+@router.delete(
+    "/{recording_id}/cues",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete recording cues",
+    description="Delete all cues of a recording.",
+)
+async def delete_recording_cues(
+    recording_id: Annotated[str, Path(description="The ID of the recording")],
+    _api_key: Annotated[str, Depends(get_api_key)],
+    db: Annotated[Database, Depends(get_db)],
+) -> None:
+    await db.recording.delete_cues(recording_id)
 
 
 @router.patch(

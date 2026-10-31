@@ -9,6 +9,7 @@ Tests endpoints:
 - GET /v2/recordings/{recording_id}/audio
 - PATCH /v2/recordings/{recording_id}
 - DELETE /v2/recordings/{recording_id}
+- GET/PUT/DELETE /v2/recordings/{recording_id}/cues
 """
 
 import json
@@ -28,9 +29,12 @@ logger = logging.getLogger(__name__)
 AUDIO_BYTES = b"ID3\x04\x00\x00\x00\x00\x00\x00fake mp3 payload"
 
 
-@pytest.mark.asyncio(loop_scope="session")
-class TestRecordingsEndpoints:
-    """Integration tests for recordings under an edition."""
+def _cue(start: int, end: int, start_ms: int, end_ms: int) -> dict:
+    return {"span": {"start": start, "end": end}, "start_ms": start_ms, "end_ms": end_ms}
+
+
+class RecordingHelpers:
+    """Setup helpers shared by the recording test classes."""
 
     async def _create_person(self, db, name: str = "Test Narrator", bdrc: str | None = None) -> str:
         return await db.person.create(
@@ -84,6 +88,11 @@ class TestRecordingsEndpoints:
 
     async def _post_recording(self, client, edition_id: str, metadata: dict, **kwargs):
         return await client.post(f"/v2/editions/{edition_id}/recordings", **self._upload(metadata, **kwargs))
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestRecordingsEndpoints(RecordingHelpers):
+    """Integration tests for recordings under an edition."""
 
     async def test_create_recording(self, client, test_database):
         person_id, edition_id = await self._setup_edition(client, test_database)
@@ -418,3 +427,168 @@ class TestRecordingsEndpoints:
             )
             # The text's author contribution survives; only the recording's narrator credit is removed.
             assert (await result.single())["count"] == 1
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestRecordingCues(RecordingHelpers):
+    """Integration tests for the cues of a recording."""
+
+    CONTENT = "0123456789"
+
+    async def _setup_recording(self, client, test_database) -> tuple[str, str]:
+        """Create a recording on an edition whose content is CONTENT, returning the edition and recording IDs."""
+        person_id = await self._create_person(test_database)
+        text_id = await self._create_text(test_database, person_id)
+        edition_id = await self._create_edition(client, text_id, content=self.CONTENT)
+        create = await self._post_recording(
+            client,
+            edition_id,
+            {"contributions": [{"type": "person", "id": person_id, "role": "narrator"}]},
+        )
+        assert create.status_code == 201
+        return edition_id, create.json()["id"]
+
+    async def _put_cues(self, client, recording_id: str, cues: list[dict]):
+        return await client.put(f"/v2/recordings/{recording_id}/cues", json=cues)
+
+    async def _get_cues(self, client, recording_id: str) -> list[dict]:
+        response = await client.get(f"/v2/recordings/{recording_id}/cues")
+        assert response.status_code == 200
+        return response.json()
+
+    async def _count(self, test_database, label: str) -> int:
+        async with test_database.get_session() as session:
+            result = await session.run(f"MATCH (n:{label}) RETURN count(n) AS count")
+            return (await result.single())["count"]
+
+    async def test_put_and_get_cues(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+        cues = [_cue(0, 4, 0, 1200), _cue(4, 10, 1200, 3000)]
+
+        assert (await self._put_cues(client, recording_id, cues)).status_code == 204
+
+        assert await self._get_cues(client, recording_id) == cues
+
+    async def test_get_cues_empty(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+
+        assert await self._get_cues(client, recording_id) == []
+
+    async def test_put_replaces_existing_cues(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(0, 4, 0, 1200), _cue(4, 10, 1200, 3000)])
+
+        replacement = [_cue(2, 6, 500, 900)]
+        assert (await self._put_cues(client, recording_id, replacement)).status_code == 204
+
+        assert await self._get_cues(client, recording_id) == replacement
+
+    async def test_put_accepts_repeated_span(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+        refrain = [_cue(0, 4, 0, 1000), _cue(0, 4, 1000, 2000)]
+
+        assert (await self._put_cues(client, recording_id, refrain)).status_code == 204
+
+        assert await self._get_cues(client, recording_id) == refrain
+
+    async def test_delete_cues(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(0, 4, 0, 1200)])
+        spans_before = await self._count(test_database, "Span")
+
+        response = await client.delete(f"/v2/recordings/{recording_id}/cues")
+
+        assert response.status_code == 204
+        assert await self._get_cues(client, recording_id) == []
+        assert await self._count(test_database, "Cue") == 0
+        assert await self._count(test_database, "Span") == spans_before - 1
+
+    async def test_cues_on_missing_recording(self, client):
+        recording_id = generate_id()
+
+        assert (await client.get(f"/v2/recordings/{recording_id}/cues")).status_code == 404
+        assert (await self._put_cues(client, recording_id, [_cue(0, 1, 0, 1)])).status_code == 404
+        assert (await client.delete(f"/v2/recordings/{recording_id}/cues")).status_code == 404
+
+    @pytest.mark.parametrize(
+        ("cues", "message"),
+        [
+            ([_cue(0, 4, 900, 100)], "'start_ms' must be less than"),
+            ([_cue(0, 4, 500, 500)], "'start_ms' must be less than"),
+            ([_cue(3, 3, 0, 100)], "at least one character"),
+            ([_cue(0, 4, 0, 1000), _cue(4, 8, 900, 2000)], "non-overlapping in time"),
+            ([], "at least 1 item"),
+        ],
+    )
+    async def test_put_rejects_invalid_cues(self, client, test_database, cues, message):
+        _, recording_id = await self._setup_recording(client, test_database)
+
+        response = await self._put_cues(client, recording_id, cues)
+
+        assert response.status_code == 422
+        assert message in response.text
+
+    async def test_put_rejects_span_past_content(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+
+        response = await self._put_cues(client, recording_id, [_cue(5, len(self.CONTENT) + 1, 0, 100)])
+
+        assert response.status_code == 422
+        assert await self._get_cues(client, recording_id) == []
+
+    async def test_deleting_recording_removes_cues(self, client, test_database):
+        _, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(0, 4, 0, 1200), _cue(4, 10, 1200, 3000)])
+        spans_before = await self._count(test_database, "Span")
+
+        assert (await client.delete(f"/v2/recordings/{recording_id}")).status_code == 204
+
+        assert await self._count(test_database, "Cue") == 0
+        assert await self._count(test_database, "Span") == spans_before - 2
+
+    async def test_deleting_edition_removes_cues(self, client, test_database):
+        edition_id, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(0, 4, 0, 1200)])
+
+        assert (await client.delete(f"/v2/editions/{edition_id}")).status_code == 204
+
+        assert await self._count(test_database, "Cue") == 0
+        assert await self._count(test_database, "Span") == 0
+
+    async def _patch_content(self, client, edition_id: str, operation: dict) -> None:
+        response = await client.patch(f"/v2/editions/{edition_id}/content", json=operation)
+        assert response.status_code == 204, response.text
+
+    async def test_insert_before_cue_shifts_it(self, client, test_database):
+        edition_id, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(5, 8, 0, 1000)])
+
+        await self._patch_content(client, edition_id, {"type": "insert", "position": 2, "text": "XX"})
+
+        assert await self._get_cues(client, recording_id) == [_cue(7, 10, 0, 1000)]
+
+    async def test_insert_inside_cue_expands_it(self, client, test_database):
+        edition_id, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(3, 7, 0, 1000)])
+
+        await self._patch_content(client, edition_id, {"type": "insert", "position": 5, "text": "XX"})
+
+        assert await self._get_cues(client, recording_id) == [_cue(3, 9, 0, 1000)]
+
+    async def test_delete_covering_cue_removes_only_that_cue(self, client, test_database):
+        edition_id, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(0, 2, 0, 500), _cue(4, 6, 500, 1000)])
+
+        await self._patch_content(client, edition_id, {"type": "delete", "start": 3, "end": 7})
+
+        assert await self._get_cues(client, recording_id) == [_cue(0, 2, 0, 500)]
+        assert await self._count(test_database, "Cue") == 1
+
+    async def test_replace_exact_cue_removes_it(self, client, test_database):
+        edition_id, recording_id = await self._setup_recording(client, test_database)
+        await self._put_cues(client, recording_id, [_cue(3, 7, 0, 1000)])
+
+        await self._patch_content(client, edition_id, {"type": "replace", "start": 3, "end": 7, "text": "XXXX"})
+
+        assert await self._get_cues(client, recording_id) == []
+        assert await self._count(test_database, "Cue") == 0

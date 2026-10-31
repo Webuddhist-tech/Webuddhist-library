@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, LiteralString
 
 from exceptions import DataNotFoundError
 from models.enums import AudioFormat
-from models.recording import RecordingInput, RecordingOutput, RecordingPatch
+from models.recording import RecordingCue, RecordingInput, RecordingOutput, RecordingPatch
 
 from .contribution_database import ContributionDatabase, contributions_return
 from .database_validator import DatabaseValidator
@@ -109,7 +109,16 @@ class RecordingDatabase:
     RETURN m.id AS edition_id, r.format AS format
     """
 
-    _DELETE_MATCHED: LiteralString = """
+    _DELETE_CUES_OF_MATCHED: LiteralString = """
+    CALL (r) {
+        MATCH (t:Cue)-[:CUE_OF]->(r)
+        OPTIONAL MATCH (span:Span)-[:SPAN_OF]->(t)
+        DETACH DELETE span, t
+    }
+    """
+
+    _DELETE_MATCHED: LiteralString = f"""
+    {_DELETE_CUES_OF_MATCHED}
     OPTIONAL MATCH (r)-[:HAS_CONTRIBUTION]->(c:Contribution)
     OPTIONAL MATCH (r)-[:HAS_TITLE]->(n:Nomen)-[:HAS_LOCALIZATION]->(lt:LocalizedText)
     DETACH DELETE r, c, n, lt
@@ -124,6 +133,27 @@ class RecordingDatabase:
     DELETE_ALL_QUERY: LiteralString = f"""
     MATCH (r:Recording)-[:RECORDING_OF]->(:Edition {{id: $edition_id}})
     {_DELETE_MATCHED}
+    """
+
+    GET_CUES_QUERY: LiteralString = """
+    MATCH (span:Span)-[:SPAN_OF]->(t:Cue)-[:CUE_OF]->(:Recording {id: $recording_id})
+    RETURN {start: span.start, end: span.end} AS span, t.start_ms AS start_ms, t.end_ms AS end_ms
+    ORDER BY t.start_ms
+    """
+
+    CREATE_CUES_QUERY: LiteralString = """
+    MATCH (r:Recording {id: $recording_id})
+    UNWIND $cues AS cue
+    CREATE (:Span {start: cue.span.start, end: cue.span.end})
+        -[:SPAN_OF]->(:Cue {start_ms: cue.start_ms, end_ms: cue.end_ms})
+        -[:CUE_OF]->(r)
+    FINISH
+    """
+
+    DELETE_CUES_QUERY: LiteralString = f"""
+    MATCH (r:Recording {{id: $recording_id}})
+    {_DELETE_CUES_OF_MATCHED}
+    FINISH
     """
 
     def __init__(self, db: Database) -> None:
@@ -155,16 +185,52 @@ class RecordingDatabase:
 
     async def get_storage_location(self, recording_id: str) -> tuple[str, AudioFormat]:
         """Return the edition ID and format needed to build the recording's storage key."""
+        async with self.session as session:
+            return await session.execute_read(
+                lambda tx: RecordingDatabase._get_storage_location_with_transaction(tx, recording_id)
+            )
 
-        async def read(tx: AsyncManagedTransaction) -> tuple[str, AudioFormat]:
-            result = await tx.run(RecordingDatabase.GET_STORAGE_KEY_QUERY, recording_id=recording_id)
-            record = await result.single()
-            if record is None:
-                raise DataNotFoundError(f"Recording with ID '{recording_id}' not found")
-            return record["edition_id"], AudioFormat(record["format"])
+    @staticmethod
+    async def _get_storage_location_with_transaction(
+        tx: AsyncManagedTransaction, recording_id: str
+    ) -> tuple[str, AudioFormat]:
+        result = await tx.run(RecordingDatabase.GET_STORAGE_KEY_QUERY, recording_id=recording_id)
+        record = await result.single()
+        if record is None:
+            raise DataNotFoundError(f"Recording with ID '{recording_id}' not found")
+        return record["edition_id"], AudioFormat(record["format"])
+
+    async def get_cues(self, recording_id: str) -> list[RecordingCue]:
+        async def read(tx: AsyncManagedTransaction) -> list[RecordingCue]:
+            await RecordingDatabase._get_storage_location_with_transaction(tx, recording_id)
+            result = await tx.run(RecordingDatabase.GET_CUES_QUERY, recording_id=recording_id)
+            return [RecordingCue.model_validate(record) for record in await result.data()]
 
         async with self.session as session:
             return await session.execute_read(read)
+
+    async def replace_cues(self, recording_id: str, cues: list[RecordingCue]) -> None:
+        async def write(tx: AsyncManagedTransaction) -> None:
+            edition_id, _ = await RecordingDatabase._get_storage_location_with_transaction(tx, recording_id)
+            max_end = max(cue.span.end for cue in cues)
+            await DatabaseValidator.validate_edition_spans(tx, edition_id, max_end)
+            await tx.run(RecordingDatabase.DELETE_CUES_QUERY, recording_id=recording_id)
+            await tx.run(
+                RecordingDatabase.CREATE_CUES_QUERY,
+                recording_id=recording_id,
+                cues=[cue.model_dump() for cue in cues],
+            )
+
+        async with self.session as session:
+            await session.execute_write(write)
+
+    async def delete_cues(self, recording_id: str) -> None:
+        async def write(tx: AsyncManagedTransaction) -> None:
+            await RecordingDatabase._get_storage_location_with_transaction(tx, recording_id)
+            await tx.run(RecordingDatabase.DELETE_CUES_QUERY, recording_id=recording_id)
+
+        async with self.session as session:
+            await session.execute_write(write)
 
     async def add(
         self,

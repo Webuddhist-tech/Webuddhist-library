@@ -163,6 +163,10 @@ def _custom_cases() -> dict[str, str]:
             CREATE (span:Span {start: 6, end: 5})
             RETURN [span] AS createdNodes, [] AS createdRelationships, [] AS deletedRelationships, [] AS deletedNodes
         """,
+        "enforce_cue_start_ms_lt_end_ms": """
+            CREATE (cue:Cue {start_ms: 500, end_ms: 500})
+            RETURN [cue] AS createdNodes, [] AS createdRelationships, [] AS deletedRelationships, [] AS deletedNodes
+        """,
         "enforce_nomen_no_alternative_chain": """
             CREATE (nomen_1:Nomen {id: randomUUID()})
             CREATE (nomen_2:Nomen {id: randomUUID()})

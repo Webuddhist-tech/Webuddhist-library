@@ -7,7 +7,7 @@ Editions are concrete versions of a text. The metadata lives in Neo4j and the ba
 - **Diplomatic edition**: A transcription of a source. Requires `metadata.type = "diplomatic"`, a `bdrc` value, and a `pagination` annotation at creation.
 - **Critical edition**: A scholarly edition. Must not include `bdrc`, and requires a `segmentation` annotation at creation.
 - **Collated edition**: Accepted by the metadata enum, but the create request does not enforce initial pagination or segmentation for this type.
-- **Content operations**: Insert, delete, and replace operations update stored base text and adjust stored spans for annotations on the edition.
+- **Content operations**: Insert, delete, and replace operations update stored base text and adjust stored spans for annotations on the edition, including the cues of its recordings.
 - **Related editions**: Discovered from alignment and text relationship data.
 
 ## Authentication
