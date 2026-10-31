@@ -100,7 +100,7 @@ nodes:
         target: Nomen
         cardinality: one
         required: false
-      CHILD_OF:
+      HAS_PARENT:
         target: Category
         cardinality: one
         required: false
@@ -166,6 +166,15 @@ nodes:
         type: string
         required: true
         unique: true
+      content_length:
+        type: integer
+        required: true
+      content_key:
+        type: string
+        required: true
+      revision:
+        type: integer
+        required: true
       colophon:
         type: string
         required: false
@@ -484,6 +493,10 @@ nodes:
         target: Pagination
         cardinality: one
         required: true
+      HAS_METADATA:
+        target: AnnotationMetadata
+        cardinality: one
+        required: false
 
   Page:
     properties:

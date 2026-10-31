@@ -1,13 +1,14 @@
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Load once for both typed application settings and AWS/OpenTelemetry SDKs.
 load_dotenv()
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     neo4j_uri: str = ""
     neo4j_username: str = ""
@@ -17,8 +18,6 @@ class Settings(BaseSettings):
     aws_s3_bucket: str = ""
     aws_region: str = ""
 
-    search_api_url: str = ""
-
     opensearch_endpoint: str = ""
     opensearch_index: str = "content-search"
     opensearch_catalog_index: str = "catalog-search"
@@ -27,6 +26,9 @@ class Settings(BaseSettings):
     opensearch_password: str = ""
 
     environment: str = ""
+    otel_enabled: bool = False
+    otel_service_name: str = "openpecha-api"
+    otel_exporter_otlp_endpoint: str = ""
 
 
 settings = Settings()

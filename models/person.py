@@ -31,7 +31,7 @@ class PersonPatch(PatchModel):
     @model_validator(mode="after")
     def remove_duplicate_alt_names(self) -> Self:
         if self.alt_names is not None and self.name is not None:
-            self.alt_names = _dedupe(list(self.alt_names), self.name) or None
+            self.alt_names = _dedupe(list(self.alt_names), self.name)
         return self
 
 

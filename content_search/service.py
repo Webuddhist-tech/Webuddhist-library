@@ -1,159 +1,140 @@
 from __future__ import annotations
 
-import logging
+from collections.abc import Iterator, Sequence
+from contextlib import aclosing
+from itertools import batched
 from typing import TYPE_CHECKING
 
-from content_search.opensearch_client import ContentSearchOpenSearchClient
-from exceptions import DataNotFoundError
-from models.annotation import SegmentWithContextOutput
-from models.content_search import (
-    ContentSearchResult,
-    ContentSearchSpan,
-)
+from database.content_state import read_at_revision
+from exceptions import DataNotFoundError, DataValidationError
+from models.content_search import ContentSearchResult, ContentSearchSpan
+from search_client import SearchIndex
 
 if TYPE_CHECKING:
+    from neo4j import AsyncManagedTransaction
+    from opensearchpy import AsyncOpenSearch
+
     from database import Database
     from storage import Storage
 
-logger = logging.getLogger(__name__)
-
-DEFAULT_CHUNK_CHARS = 4000
-DEFAULT_CHUNK_OVERLAP_CHARS = 500
-SIMILAR_PHRASE_SLOP = 12
 CONTEXT_CHARS = 200
+CHUNK_CHARS = 4000
+CHUNK_OVERLAP = 500
+CHUNK_STEP = CHUNK_CHARS - CHUNK_OVERLAP
+# Longer repeated literals can exceed OpenSearch's wildcard automaton limit.
+LITERAL_PREFIX_CHARS = 64
+MAX_QUERY_CHARS = 10_000
+CANDIDATE_BATCH = 25
+MAX_DOCUMENTS = 1000
+MAX_OCCURRENCES = 10000
 
 
 class ContentSearchService:
-    def __init__(
-        self,
-        *,
-        endpoint: str,
-        index_name: str,
-        region: str,
-        auth_mode: str = "basic",
-        username: str = "",
-        password: str = "",
-        chunk_chars: int = DEFAULT_CHUNK_CHARS,
-        chunk_overlap_chars: int = DEFAULT_CHUNK_OVERLAP_CHARS,
-        request_timeout: int = 120,
-        max_retries: int = 3,
-    ) -> None:
-        if chunk_overlap_chars >= chunk_chars:
-            raise ValueError("chunk_overlap_chars must be smaller than chunk_chars")
-        self._client = ContentSearchOpenSearchClient(
-            endpoint=endpoint,
-            index_name=index_name,
-            region=region,
-            auth_mode=auth_mode,
-            username=username,
-            password=password,
-            request_timeout=request_timeout,
-            max_retries=max_retries,
-        )
-        self.chunk_chars = chunk_chars
-        self.chunk_overlap_chars = chunk_overlap_chars
-
-    async def connect(self) -> None:
-        await self._client.connect()
-        await self.setup_index()
-
-    async def close(self) -> None:
-        await self._client.close()
-
-    async def delete_index(self) -> None:
-        await self._client.delete_index()
-
-    async def refresh_index(self) -> None:
-        await self._client.refresh_index()
+    def __init__(self, *, client: AsyncOpenSearch, index_name: str) -> None:
+        self.index = SearchIndex(client, index_name)
 
     async def setup_index(self) -> None:
-        if await self._client.index_exists():
-            return
-        await self._client.create_index(_index_body())
+        await self.index.setup_index(_index_body())
 
-    async def index_edition(self, edition_id: str, db: Database, storage: Storage, *, refresh: bool = True) -> None:
-        try:
-            edition = await db.edition.get(edition_id)
-            text = await db.text.get(edition.text_id)
-            content = await storage.retrieve_base_text(text_id=edition.text_id, edition_id=edition_id)
-            segments = await _get_display_segments_for_edition(db, edition_id=edition_id, text_id=edition.text_id)
-            if not segments:
-                logger.warning(
-                    "Skipping content search indexing for edition %s because it has no display segments",
-                    edition_id,
-                )
-                await self.delete_edition(edition_id, refresh=refresh)
-                return
-            documents = _build_chunk_documents(
-                text_id=edition.text_id,
-                edition_id=edition_id,
-                edition_type=edition.type.value,
-                language=text.language,
-                title=text.title.root,
-                source=edition.source,
-                content=content,
-                segments=segments,
-                chunk_chars=self.chunk_chars,
-                chunk_overlap_chars=self.chunk_overlap_chars,
+    async def prepare_documents(self, edition_id: str, db: Database, storage: Storage) -> list[dict]:
+        async def eligibility(tx: AsyncManagedTransaction) -> bool:
+            result = await tx.run(
+                """
+                RETURN EXISTS { (:Edition {id: $id})-[:HAS_SEGMENTATION]->(:Segmentation)
+                                <-[:SEGMENT_OF]-(:Segment)<-[:SPAN_OF]-(:Span) } AS eligible
+            """,
+                id=edition_id,
             )
+            return (await result.single(strict=True))["eligible"]
 
-            await self.delete_edition(edition_id, refresh=refresh)
-            await self._client.bulk_index(documents, refresh=refresh)
-            logger.info("Indexed %d content search chunks for edition %s", len(documents), edition_id)
-        except Exception:
-            logger.exception("Failed to index content search chunks for edition %s", edition_id)
-            raise
+        try:
+            async with db.get_session() as session:
+                state, eligible = await session.execute_read(read_at_revision, edition_id, eligibility)
+            if not eligible:
+                return []
+        except DataNotFoundError:
+            return []
+        content = await storage.read_text(state.object_key)
+        if len(content) != state.length:
+            raise DataValidationError(f"Stored content length differs for edition {edition_id}")
+        return [
+            {
+                "id": f"{edition_id}:{offset}",
+                "edition_id": edition_id,
+                "text_id": state.text_id,
+                "object_key": state.object_key,
+                "offset": offset,
+                "content": content[offset : offset + CHUNK_CHARS],
+            }
+            for offset in range(0, len(content), CHUNK_STEP)
+        ]
 
-    async def delete_edition(self, edition_id: str, *, refresh: bool = True) -> None:
-        await self._client.delete_edition(edition_id, refresh=refresh)
+    async def index_edition(self, edition_id: str, db: Database, storage: Storage) -> None:
+        documents = await self.prepare_documents(edition_id, db, storage)
+        await self.index.delete_by_query({"term": {"edition_id": edition_id}})
+        await self.index.bulk_index(documents, refresh=False)
 
-    async def delete_all_documents(self, *, refresh: bool = True) -> None:
-        await self._client.delete_all_documents(refresh=refresh)
+    async def _extend_hits(self, hits: list[dict], query_length: int) -> None:
+        """Fetch only the following chunks needed to verify a long literal match."""
+        extra = (query_length - CHUNK_OVERLAP + CHUNK_STEP - 1) // CHUNK_STEP
+        if extra <= 0:
+            return
+        neighbors = {
+            (hit["_index"], f"{hit['_source']['edition_id']}:{hit['_source']['offset'] + step * CHUNK_STEP}")
+            for hit in hits
+            for step in range(1, extra + 1)
+        }
+        documents = await self.index.get_documents(neighbors)
+        for hit in hits:
+            source = hit["_source"]
+            for step in range(1, extra + 1):
+                key = hit["_index"], f"{source['edition_id']}:{source['offset'] + step * CHUNK_STEP}"
+                part = documents.get(key)
+                if part is None or part["object_key"] != source["object_key"]:
+                    break
+                source["content"] += part["content"][CHUNK_OVERLAP:]
 
     async def search(
         self,
         *,
+        db: Database,
         query: str,
         search_type: str,
         limit: int,
         text_id: str | None = None,
         edition_id: str | None = None,
     ) -> list[ContentSearchResult]:
-        response = await self._client.search(
-            _search_body(
-                query=query,
-                search_type=search_type,
-                limit=limit,
-                text_id=text_id,
-                edition_id=edition_id,
-            ),
-        )
-        return _parse_results(response, query=query, search_type=search_type, limit=limit)
-
-
-async def _get_display_segments_for_edition(
-    db: Database,
-    *,
-    edition_id: str,
-    text_id: str,
-) -> list[SegmentWithContextOutput]:
-    try:
-        segmentation = await db.annotation.segmentation.get_by_edition(edition_id)
-    except DataNotFoundError:
-        return []
-
-    segments = await db.annotation.segmentation.get_all_segments_by_edition(edition_id)
-    return [
-        SegmentWithContextOutput(
-            id=segment.id,
-            reference=segment.reference,
-            segmentation_id=segmentation.id,
-            edition_id=edition_id,
-            text_id=text_id,
-            lines=segment.lines,
-        )
-        for segment in segments
-    ]
+        results: list[ContentSearchResult] = []
+        if not 1 <= len(query) <= MAX_QUERY_CHARS:
+            raise DataValidationError(f"Search query must contain 1-{MAX_QUERY_CHARS} characters")
+        documents = occurrences = 0
+        body = _search_body(query, search_type, text_id, edition_id)
+        async with aclosing(self.index.pages(body)) as pages:
+            async for hits in pages:
+                documents += len(hits)
+                if search_type == "exact":
+                    await self._extend_hits(hits, len(query))
+                for batch in batched(
+                    (c for hit in hits for c in _candidates(hit, query, search_type)), 100, strict=False
+                ):
+                    candidates = batch[: MAX_OCCURRENCES - occurrences]
+                    occurrences += len(candidates)
+                    for item in await _join_segments(db, candidates):
+                        if search_type == "similar" and any(
+                            previous.edition_id == item.edition_id
+                            and previous.context_span.start < item.context_span.end
+                            and item.context_span.start < previous.context_span.end
+                            for previous in results
+                        ):
+                            continue
+                        results.append(item)
+                        if len(results) == limit:
+                            return results
+                    if occurrences >= MAX_OCCURRENCES:
+                        return results
+                if len(hits) < CANDIDATE_BATCH or documents >= MAX_DOCUMENTS:
+                    return results
+        return results
 
 
 def _index_body() -> dict:
@@ -162,339 +143,147 @@ def _index_body() -> dict:
             "number_of_shards": 1,
             "analysis": {
                 "analyzer": {
-                    "content_search_default": {
-                        "type": "custom",
-                        "tokenizer": "icu_tokenizer",
-                        "filter": ["lowercase"],
-                    },
-                },
-            },
-        },
-        "mappings": {
-            "properties": {
-                "id": {"type": "keyword"},
-                "document_type": {"type": "keyword"},
-                "text_id": {"type": "keyword"},
-                "edition_id": {"type": "keyword"},
-                "primary_segment_id": {"type": "keyword"},
-                "edition_type": {"type": "keyword"},
-                "language": {"type": "keyword"},
-                "title": {"type": "object", "enabled": False},
-                "source": {"type": "keyword"},
-                "segments": {
-                    "type": "nested",
-                    "properties": {
-                        "id": {"type": "keyword"},
-                        "span_start": {"type": "integer"},
-                        "span_end": {"type": "integer"},
-                    },
-                },
-                "context_span_start": {"type": "integer"},
-                "context_span_end": {"type": "integer"},
-                "content": {
-                    "type": "text",
-                    "analyzer": "content_search_default",
-                },
-            },
-        },
-    }
-
-
-def _build_chunk_documents(
-    *,
-    text_id: str,
-    edition_id: str,
-    edition_type: str,
-    language: str,
-    title: dict[str, str],
-    source: str | None,
-    content: str,
-    segments: list[SegmentWithContextOutput],
-    chunk_chars: int,
-    chunk_overlap_chars: int,
-) -> list[dict]:
-    documents = []
-    overlap_start_index = 0
-    chunk_start = 0
-    chunk_index = 0
-    step = chunk_chars - chunk_overlap_chars
-    while chunk_start < len(content):
-        chunk_end = min(len(content), chunk_start + chunk_chars)
-        covered_segments, overlap_start_index = _segments_overlapping_from_index(
-            segments,
-            start=chunk_start,
-            end=chunk_end,
-            start_index=overlap_start_index,
-        )
-        if not covered_segments:
-            chunk_start += step
-            continue
-        documents.append(
-            _document(
-                document_id=f"{edition_id}:chunk:{chunk_index}",
-                text_id=text_id,
-                edition_id=edition_id,
-                primary_segment_id=covered_segments[0].id,
-                edition_type=edition_type,
-                language=language,
-                title=title,
-                source=source,
-                content=content[chunk_start:chunk_end],
-                context_start=chunk_start,
-                context_end=chunk_end,
-                segments=covered_segments,
-            )
-        )
-        chunk_index += 1
-        if chunk_end == len(content):
-            break
-        chunk_start += step
-    return documents
-
-
-def _document(
-    *,
-    document_id: str,
-    text_id: str,
-    edition_id: str,
-    primary_segment_id: str | None,
-    edition_type: str,
-    language: str,
-    title: dict[str, str],
-    source: str | None,
-    content: str,
-    context_start: int,
-    context_end: int,
-    segments: list[SegmentWithContextOutput],
-) -> dict:
-    segment_docs = [
-        {
-            "id": segment.id,
-            "span_start": segment.span.start,
-            "span_end": segment.span.end,
-        }
-        for segment in segments
-    ]
-    return {
-        "id": document_id,
-        "document_type": "chunk",
-        "text_id": text_id,
-        "edition_id": edition_id,
-        "primary_segment_id": primary_segment_id,
-        "edition_type": edition_type,
-        "language": language,
-        "title": title,
-        "source": source,
-        "segments": segment_docs,
-        "context_span_start": context_start,
-        "context_span_end": context_end,
-        "content": content,
-    }
-
-
-def _segments_overlapping_from_index(
-    segments: list[SegmentWithContextOutput],
-    *,
-    start: int,
-    end: int,
-    start_index: int,
-) -> tuple[list[SegmentWithContextOutput], int]:
-    while start_index < len(segments) and segments[start_index].span.end <= start:
-        start_index += 1
-
-    overlapping = []
-    index = start_index
-    while index < len(segments):
-        segment = segments[index]
-        if segment.span.start >= end:
-            break
-        if segment.span.end > start:
-            overlapping.append(segment)
-        index += 1
-    return overlapping, start_index
-
-
-def _search_body(
-    *,
-    query: str,
-    search_type: str,
-    limit: int,
-    text_id: str | None,
-    edition_id: str | None,
-) -> dict:
-    filters = []
-    if text_id:
-        filters.append({"term": {"text_id": text_id}})
-    if edition_id:
-        filters.append({"term": {"edition_id": edition_id}})
-
-    must = [_exact_candidate_query(query)] if search_type == "exact" else [_similar_candidate_query(query)]
-    return {
-        "size": max(limit * 10, 50) if search_type == "exact" else limit,
-        "query": {"bool": {"must": must, "filter": filters}},
-        "highlight": {
-            "pre_tags": [""],
-            "post_tags": [""],
-            "fields": {
-                "content": {
-                    "number_of_fragments": 1,
-                    "fragment_size": CONTEXT_CHARS,
+                    "content_search_default": {"type": "custom", "tokenizer": "icu_tokenizer", "filter": ["lowercase"]},
                 }
             },
         },
+        "mappings": {
+            "_meta": {"projection_version": 3},
+            "dynamic": "strict",
+            "properties": {
+                "id": {"type": "keyword"},
+                "edition_id": {"type": "keyword"},
+                "text_id": {"type": "keyword"},
+                "object_key": {"type": "keyword"},
+                "offset": {"type": "long"},
+                "content": {
+                    "type": "wildcard",
+                    "fields": {
+                        "analyzed": {"type": "text", "analyzer": "content_search_default", "index_options": "offsets"},
+                    },
+                },
+            },
+        },
     }
 
 
-def _exact_candidate_query(query: str) -> dict:
-    return {
-        "bool": {
-            "should": [
-                {"match_phrase": {"content": {"query": query, "boost": 3}}},
-                {"match": {"content": {"query": query, "operator": "and"}}},
-            ],
-            "minimum_should_match": 1,
-        }
-    }
-
-
-def _similar_candidate_query(query: str) -> dict:
-    return {"match_phrase": {"content": {"query": query, "slop": SIMILAR_PHRASE_SLOP}}}
-
-
-def _parse_results(response: dict, *, query: str, search_type: str, limit: int) -> list[ContentSearchResult]:
-    results: list[ContentSearchResult] = []
-    seen: set[tuple[str, int | None, int | None, int, int]] = set()
-    for hit in response.get("hits", {}).get("hits", []):
-        source = hit.get("_source", {})
-        if search_type == "exact":
-            for result in _exact_results_from_hit(hit, source, query):
-                key = (
-                    result.edition_id,
-                    result.match_span.start if result.match_span else None,
-                    result.match_span.end if result.match_span else None,
-                    0,
-                    0,
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                results.append(result)
-                if len(results) >= limit:
-                    return results
-        else:
-            result = _similar_result_from_hit(hit, source)
-            key = (result.edition_id, None, None, result.context_span.start, result.context_span.end)
-            if key in seen:
-                continue
-            seen.add(key)
-            results.append(result)
-            if len(results) >= limit:
-                return results
-    return results
-
-
-def _exact_results_from_hit(hit: dict, source: dict, query: str) -> list[ContentSearchResult]:
-    content = source.get("content", "")
-    context_start = source.get("context_span_start", 0)
-    results = []
-    search_from = 0
-    while True:
-        local_start = content.find(query, search_from)
-        if local_start == -1:
-            break
-        local_end = local_start + len(query)
-        match_span = ContentSearchSpan(start=context_start + local_start, end=context_start + local_end)
-        context, result_context_span = _context_around_match(source, match_span)
-        results.append(
-            _result(
-                hit=hit,
-                source=source,
-                context=context,
-                context_span=result_context_span,
-                match_span=match_span,
-                segment_ids=_segment_ids_from_source(source, match_span),
-            )
+def _search_body(query: str, search_type: str, text_id: str | None, edition_id: str | None) -> dict:
+    filters: list[dict] = []
+    if text_id is not None:
+        filters.append({"term": {"text_id": text_id}})
+    if edition_id is not None:
+        filters.append({"term": {"edition_id": edition_id}})
+    clauses: dict = {"filter": filters}
+    if search_type == "exact":
+        literal = (
+            query[: min(CHUNK_OVERLAP, LITERAL_PREFIX_CHARS)]
+            .replace("\\", "\\\\")
+            .replace("*", "\\*")
+            .replace("?", "\\?")
         )
-        search_from = local_start + 1
-    return results
+        filters.append({"wildcard": {"content": {"value": f"*{literal}*"}}})
+        clauses["should"] = [{"match_phrase": {"content.analyzed": {"query": query}}}]
+        clauses["minimum_should_match"] = 0  # Scoring must not exclude literal-only matches.
+    else:
+        clauses["must"] = [{"match_phrase": {"content.analyzed": {"query": query, "slop": 12}}}]
+    body: dict = {
+        "size": CANDIDATE_BATCH,
+        "query": {"bool": clauses},
+        "sort": [{"_score": "desc"}, {"edition_id": "asc"}, {"offset": "asc"}],
+    }
+    if search_type != "exact":
+        body["highlight"] = {
+            "pre_tags": [""],
+            "post_tags": [""],
+            "fields": {
+                "content.analyzed": {"number_of_fragments": 1, "fragment_size": CONTEXT_CHARS, "order": "score"},
+            },
+        }
+    return body
 
 
-def _similar_result_from_hit(hit: dict, source: dict) -> ContentSearchResult:
-    context, context_span = _context_from_hit(hit, source)
-    return _result(
-        hit=hit,
-        source=source,
-        context=context,
-        context_span=context_span,
-        match_span=None,
-        segment_ids=_segment_ids_from_source(source, context_span),
-    )
+def _candidates(hit: dict, query: str, search_type: str) -> Iterator[dict]:
+    source = hit["_source"]
+    content = source["content"]
+    if search_type == "exact":
+        start = content.find(query)
+        # Each start belongs to one chunk, so overlapping chunks cannot duplicate an exact hit.
+        while 0 <= start < CHUNK_STEP:
+            end = start + len(query)
+            padding = max(0, CONTEXT_CHARS - len(query))
+            left, right = max(0, start - padding // 2), min(len(content), end + padding - padding // 2)
+            yield _candidate(hit, left, right, start, end)
+            start = content.find(query, start + 1)
+    else:
+        for fragment in hit.get("highlight", {}).get("content.analyzed", []):
+            start = content.find(fragment)
+            if start >= 0:
+                padding = max(0, CONTEXT_CHARS - len(fragment))
+                left = max(0, start - padding // 2)
+                right = min(len(content), start + len(fragment) + padding - padding // 2)
+                yield _candidate(hit, left, right, None, None)
+                return
+        # An absent/unlocatable highlight is not evidence of a match at offset zero.
 
 
-def _result(
-    *,
-    hit: dict,
-    source: dict,
-    context: str,
-    context_span: ContentSearchSpan,
-    match_span: ContentSearchSpan | None,
-    segment_ids: list[str],
-) -> ContentSearchResult:
-    return ContentSearchResult(
-        text_id=source["text_id"],
-        edition_id=source["edition_id"],
-        segment_ids=segment_ids,
-        context_span=context_span,
-        match_span=match_span,
-        score=float(hit.get("_score") or 0.0),
-        context=context,
-    )
+def _candidate(hit: dict, left: int, right: int, start: int | None, end: int | None) -> dict:
+    source = hit["_source"]
+    offset = source["offset"]
+    return {
+        "key": source["object_key"],
+        "start": offset + (start if start is not None else left),
+        "end": offset + (end if end is not None else right),
+        "result": ContentSearchResult(
+            text_id=source["text_id"],
+            edition_id=source["edition_id"],
+            score=float(hit.get("_score") or 0),
+            context=source["content"][left:right],
+            context_span=ContentSearchSpan(start=offset + left, end=offset + right),
+            match_span=ContentSearchSpan(start=offset + start, end=offset + end)
+            if start is not None and end is not None
+            else None,
+        ),
+    }
 
 
-def _segment_ids_from_source(
-    source: dict,
-    match_span: ContentSearchSpan | None = None,
-) -> list[str]:
-    raw_segments = source.get("segments", [])
-    if match_span is not None:
-        raw_segments = [
-            segment
-            for segment in raw_segments
-            if segment["span_start"] < match_span.end and segment["span_end"] > match_span.start
+async def _join_segments(db: Database, candidates: Sequence[dict]) -> list[ContentSearchResult]:
+    if not candidates:
+        return []
+    rows = [
+        {"i": i, "edition": c["result"].edition_id, "key": c["key"], "start": c["start"], "end": c["end"]}
+        for i, c in enumerate(candidates)
+    ]
+
+    async def read(tx: AsyncManagedTransaction) -> list[ContentSearchResult]:
+        result = await tx.run(
+            """
+            UNWIND $rows AS row
+            MATCH (e:Edition {id: row.edition, content_key: row.key})
+            WITH collect({i: row.i, edition: e.id, revision: e.revision, start: row.start, end: row.end}) AS snapshots
+            UNWIND snapshots AS snapshot
+            MATCH (:Edition {id: snapshot.edition})-[:HAS_SEGMENTATION]->(:Segmentation)
+                  <-[:SEGMENT_OF]-(s:Segment)<-[:SPAN_OF]-(span:Span)
+            WHERE (span.start < snapshot.end AND span.end > snapshot.start) OR
+                  (span.start = span.end AND span.start >= snapshot.start AND span.start < snapshot.end)
+            WITH snapshot, s.id AS id, min(span.start) AS start ORDER BY snapshot.i, start, id
+            RETURN snapshot.i AS i, snapshot.edition AS edition, snapshot.revision AS revision, collect(id) AS segments
+            ORDER BY i
+        """,
+            rows=rows,
+        )
+        matches = await result.data()
+        if not matches:
+            return []
+        result = await tx.run(
+            "MATCH (e:Edition) WHERE e.id IN $ids RETURN e.id AS id, e.revision AS revision",
+            ids=list({match["edition"] for match in matches}),
+        )
+        revisions = {r["id"]: r["revision"] for r in await result.data()}
+        return [
+            candidates[match["i"]]["result"].model_copy(update={"segment_ids": match["segments"]})
+            for match in matches
+            if revisions.get(match["edition"]) == match["revision"]
         ]
-    return [segment["id"] for segment in raw_segments]
 
-
-def _context_around_match(source: dict, match_span: ContentSearchSpan) -> tuple[str, ContentSearchSpan]:
-    content = source.get("content", "")
-    chunk_start = source.get("context_span_start", 0)
-    local_start = max(0, match_span.start - chunk_start)
-    local_end = min(len(content), match_span.end - chunk_start)
-    match_length = local_end - local_start
-    remaining_context_chars = max(CONTEXT_CHARS - match_length, 0)
-    before_chars = remaining_context_chars // 2
-    after_chars = remaining_context_chars - before_chars
-    context_start = max(0, local_start - before_chars)
-    context_end = min(len(content), local_end + after_chars)
-    return _context_from_local_span(source, context_start, context_end)
-
-
-def _context_from_hit(hit: dict, source: dict) -> tuple[str, ContentSearchSpan]:
-    content = source.get("content", "")
-    highlights = hit.get("highlight", {}).get("content", [])
-    if highlights:
-        highlighted_context = highlights[0]
-        local_start = content.find(highlighted_context)
-        if local_start != -1:
-            return _context_from_local_span(source, local_start, local_start + len(highlighted_context))
-
-    return _context_from_local_span(source, 0, min(len(content), CONTEXT_CHARS))
-
-
-def _context_from_local_span(source: dict, start: int, end: int) -> tuple[str, ContentSearchSpan]:
-    content = source.get("content", "")
-    chunk_start = source.get("context_span_start", 0)
-    return (
-        content[start:end],
-        ContentSearchSpan(start=chunk_start + start, end=chunk_start + end),
-    )
+    async with db.get_session() as session:
+        return await session.execute_read(read)

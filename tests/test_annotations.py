@@ -167,35 +167,6 @@ class TestGetSegmentation(TestAnnotationsEndpoints):
         assert len(data) == 2
         assert len(data[0]["lines"]) == 2
 
-    async def test_get_segmentation_with_pagination(self, client, test_database, test_person_data):
-        """Test segmentation segment rows support limit/offset pagination."""
-        person_id = await self._create_test_person(test_database, test_person_data)
-        text_id = await self._create_test_text(test_database, person_id)
-        edition_id = await self._create_test_edition(test_database, text_id, "0123456789")
-
-        segmentation = SegmentationInput(
-            segments=[
-                SegmentInput(lines=[Span(start=0, end=5)]),
-                SegmentInput(lines=[Span(start=5, end=10)]),
-            ]
-        )
-        await test_database.annotation.segmentation.add(edition_id, segmentation)
-
-        first_page = await client.get(f"/v2/editions/{edition_id}/segmentation/segments?limit=1")
-        assert first_page.status_code == 200
-        first_body = first_page.json()
-        assert len(first_body["items"]) == 1
-        assert first_body["has_more"] is True
-        assert first_body["offset"] == 0
-        assert first_body["limit"] == 1
-
-        second_page = await client.get(f"/v2/editions/{edition_id}/segmentation/segments?limit=1&offset=1")
-        assert second_page.status_code == 200
-        second_body = second_page.json()
-        assert len(second_body["items"]) == 1
-        assert second_body["has_more"] is False
-        assert second_body["offset"] == 1
-        assert second_body["limit"] == 1
 
 
 class TestDeleteSegmentation(TestAnnotationsEndpoints):
@@ -243,6 +214,7 @@ class TestDeleteSegmentation(TestAnnotationsEndpoints):
 
         second_delete = await client.delete(f"/v2/editions/{edition_id}/segmentation")
         assert second_delete.status_code == 204
+        assert (await client.get(f"/v2/editions/{edition_id}/segmentation")).status_code == 404
 
     async def test_delete_segmentation_removes_alignment_relationships(self, client, test_database, test_person_data):
         """Deleting a segmentation should remove direct alignment relationships."""
@@ -636,6 +608,38 @@ class TestDeleteBibliographic(TestAnnotationsEndpoints):
 class TestAddAnnotationSpanBounds(TestAnnotationsEndpoints):
     """Tests that annotation spans must fit the edition's content length"""
 
+    @pytest.mark.parametrize("inline", [False, True])
+    @pytest.mark.parametrize(
+        ("spans", "status"),
+        [
+            ([(0, 5), (6, 10)], 422),
+            ([(0, 6), (5, 10)], 422),
+            ([(5, 10), (0, 5)], 422),
+            ([(0, 10), (5, 5)], 422),
+            ([(0, 0), (0, 5), (5, 5), (5, 10)], 201),
+            ([(2, 5), (5, 8)], 201),
+        ],
+    )
+    async def test_segmentation_requires_contiguous_segments(
+        self, client, test_database, test_person_data, inline, spans, status
+    ):
+        person_id = await self._create_test_person(test_database, test_person_data)
+        text_id = await self._create_test_text(test_database, person_id)
+        segmentation = {"segments": [{"lines": [{"start": start, "end": end}]} for start, end in spans]}
+        if inline:
+            response = await client.post(
+                f"/v2/texts/{text_id}/editions",
+                json={"metadata": {"type": "critical"}, "content": "0123456789", "segmentation": segmentation},
+            )
+        else:
+            edition_id = await self._create_test_edition(
+                test_database, text_id, "0123456789", edition_type=EditionType.CRITICAL
+            )
+            response = await client.post(f"/v2/editions/{edition_id}/segmentation", json=segmentation)
+        assert response.status_code == status, response.text
+        if status == 422:
+            assert "contiguous" in response.text
+
     async def test_post_segmentation_rejects_span_beyond_content(self, client, test_database, test_person_data):
         """Test that a segmentation span past the end of the content is rejected"""
         person_id = await self._create_test_person(test_database, test_person_data)
@@ -703,6 +707,9 @@ class TestAddAnnotationSpanBounds(TestAnnotationsEndpoints):
         )
 
         assert response.status_code == 201
+        stored = await client.get(f"/v2/editions/{edition_id}/segmentation/segments")
+        assert stored.status_code == 200
+        assert [segment["lines"] for segment in stored.json()["items"]] == [[{"start": 0, "end": 10}]]
 
 
 class TestAddAnnotationEditionNotFound(TestAnnotationsEndpoints):
@@ -879,7 +886,7 @@ class TestAnnotationRoundTrip(TestAnnotationsEndpoints):
         segmentation = SegmentationInput(
             segments=[
                 SegmentInput(lines=[Span(start=0, end=10)]),
-                SegmentInput(lines=[Span(start=11, end=23)]),
+                SegmentInput(lines=[Span(start=10, end=23)]),
             ]
         )
         segmentation_id = await test_database.annotation.segmentation.add(edition_id, segmentation)
@@ -1066,9 +1073,13 @@ class TestAddPagination(TestAnnotationsEndpoints):
 
         response = await client.post(f"/v2/editions/{edition_id}/pagination", json=pagination_data)
         assert response.status_code == 201
+        stored = await test_database.annotation.pagination.get_all(edition_id)
+        assert stored is not None
+        assert [(volume.index, [(page.reference, [(line.start, line.end) for line in page.lines]) for page in volume.pages]) for volume in stored.volumes] == [(1, [("1a", [(0, 8)])]), (2, [("2a", [(8, 16)])])]
 
-    async def test_add_pagination_with_blank_page_succeeds(self, client, test_database, test_person_data):
-        """A folio with no text is a page whose single line is empty at the position it sits."""
+    @pytest.mark.parametrize("lines", [[], [{"start": 8, "end": 8}], [{"start": 8, "end": 8}] * 2])
+    async def test_add_pagination_with_blank_page_fails(self, client, test_database, test_person_data, lines):
+        """Pages must cover text, even when surrounded by valid pages."""
         person_id = await self._create_test_person(test_database, test_person_data)
         text_id = await self._create_test_text(test_database, person_id)
         edition_id = await self._create_test_edition(
@@ -1080,7 +1091,7 @@ class TestAddPagination(TestAnnotationsEndpoints):
                 {
                     "pages": [
                         {"reference": "1a", "lines": [{"start": 0, "end": 8}]},
-                        {"reference": "1b", "lines": [{"start": 8, "end": 8}]},
+                        {"reference": "1b", "lines": lines},
                         {"reference": "2a", "lines": [{"start": 8, "end": 16}]},
                     ]
                 }
@@ -1088,11 +1099,18 @@ class TestAddPagination(TestAnnotationsEndpoints):
         }
 
         response = await client.post(f"/v2/editions/{edition_id}/pagination", json=pagination_data)
-        assert response.status_code == 201, response.json()
+        assert response.status_code == 422, response.json()
+        assert await test_database.annotation.pagination.get_all(edition_id) is None
 
-        pages = (await client.get(f"/v2/paginations/{response.json()['id']}")).json()["volumes"][0]["pages"]
-        assert [page["reference"] for page in pages] == ["1a", "1b", "2a"]
-        assert pages[1]["lines"] == [{"start": 8, "end": 8}]
+        response = await client.post(
+            f"/v2/texts/{text_id}/editions",
+            json={
+                "content": "0" * 16,
+                "metadata": {"type": "diplomatic", "bdrc": "Wempty"},
+                "pagination": pagination_data,
+            },
+        )
+        assert response.status_code == 422, response.json()
 
     async def test_add_pagination_multiple_volumes_without_index_fails(self, client, test_database, test_person_data):
         """Test that pagination creation fails when multiple volumes don't specify indexes"""

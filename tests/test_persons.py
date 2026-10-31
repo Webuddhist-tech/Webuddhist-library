@@ -667,6 +667,12 @@ class TestPostPersonV2:
         data = response.json()
         assert "id" in data
 
+        stored = (await client.get(f"/v2/persons/{data['id']}")).json()
+        assert stored["name"] == person_data["name"]
+        assert {tuple(sorted(name.items())) for name in stored.get("alt_names") or []} == {
+            tuple(sorted(name.items())) for name in person_data.get("alt_names", [])
+        }
+
     async def test_create_person_missing_json(self, client, test_database):
         """Test POST with no JSON data"""
         response = await client.post("/v2/persons/")
@@ -768,6 +774,12 @@ class TestPostPersonV2:
         data = response.json()
         assert "id" in data
 
+        stored = (await client.get(f"/v2/persons/{data['id']}")).json()
+        assert stored["name"] == person_data["name"]
+        assert {tuple(sorted(name.items())) for name in stored.get("alt_names") or []} == {
+            tuple(sorted(name.items())) for name in person_data.get("alt_names", [])
+        }
+
     async def test_create_person_with_wiki_id(self, client, test_database):
         """Test creating person with Wiki identifier and verify roundtrip"""
         person_data = {"name": {"en": "Wiki Person"}, "wiki": "Q12345"}
@@ -845,6 +857,12 @@ class TestPostPersonV2:
         data = response.json()
         assert "id" in data
 
+        stored = (await client.get(f"/v2/persons/{data['id']}")).json()
+        assert stored["name"] == person_data["name"]
+        assert {tuple(sorted(name.items())) for name in stored.get("alt_names") or []} == {
+            tuple(sorted(name.items())) for name in person_data.get("alt_names", [])
+        }
+
     async def test_create_person_alt_name_same_as_primary_deduped(self, client, test_database):
         """Alt name identical to primary name should be deduplicated"""
         person_data = {
@@ -892,6 +910,10 @@ class TestPostPersonV2:
         get_data = get_response.json()
         assert len(get_data.get("alt_names", [])) == 10
 
+        assert {tuple(sorted(name.items())) for name in get_data["alt_names"]} == {
+            tuple(sorted(name.items())) for name in person_data["alt_names"]
+        }
+
     async def test_create_person_name_with_special_characters(self, client, test_database):
         """Test creating person with special characters in name"""
         person_data = {
@@ -908,6 +930,12 @@ class TestPostPersonV2:
         data = response.json()
         assert "id" in data
 
+        stored = (await client.get(f"/v2/persons/{data['id']}")).json()
+        assert stored["name"] == person_data["name"]
+        assert {tuple(sorted(name.items())) for name in stored.get("alt_names") or []} == {
+            tuple(sorted(name.items())) for name in person_data.get("alt_names", [])
+        }
+
     async def test_create_person_with_bcp47_language_tag(self, client, test_database):
         """Test creating person with BCP47 language tags like en-US"""
         person_data = {
@@ -922,6 +950,12 @@ class TestPostPersonV2:
         assert response.status_code == 201
         data = response.json()
         assert "id" in data
+
+        stored = (await client.get(f"/v2/persons/{data['id']}")).json()
+        assert stored["name"] == person_data["name"]
+        assert {tuple(sorted(name.items())) for name in stored.get("alt_names") or []} == {
+            tuple(sorted(name.items())) for name in person_data.get("alt_names", [])
+        }
 
     async def test_create_person_with_invalid_language_code(self, client, test_database):
         """Test creating person with invalid language code returns error"""
@@ -1396,6 +1430,9 @@ class TestPatchPersonV2:
         assert get_response.status_code == 200
         get_data = get_response.json()
         assert "id" in get_data
+
+        assert data["id"] == get_data["id"] == person_id
+        assert data["name"] == get_data["name"] == patch_data["name"]
 
     async def test_patch_person_clear_alt_names(self, client, test_database):
         """Test clearing alt_names by providing empty list"""

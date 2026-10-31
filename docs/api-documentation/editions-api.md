@@ -72,12 +72,13 @@ Returns a short-lived presigned URL for downloading the complete base text direc
 
 ```json
 {
-  "url": "https://bucket.s3.example/base_texts/TXT123/ED123.txt?...",
+  "url": "https://bucket.s3.example/objects/OBJ123?...",
   "expires_at": "2026-10-13T15:00:00Z"
 }
 ```
 
-Fetching `url` returns the raw content as `text/plain; charset=utf-8`. Use the existing content endpoint for
+Fetching `url` returns the raw content as `text/plain; charset=utf-8`. The URL points at the content version that
+was current when it was issued; after a content edit it keeps returning the earlier version. Use the existing content endpoint for
 character-span requests. The URL expires after one hour and acts as a bearer credential until then, so clients
 should not log or persist it. Browser clients that fetch the URL in JavaScript require the S3 bucket's CORS policy
 to allow `GET` from the frontend origin.
@@ -131,7 +132,9 @@ Validation rules:
 
 Subsequent annotation spans are validated against the patched text, not the original.
 
-The database span adjustment is performed before the storage write. If the storage write fails, the code compensates the span adjustment before re-raising.
+The server uploads a new immutable content object, then commits its pointer, length, span adjustments, and internal revision in one transaction. Internal edition revisions detect concurrent content or annotation changes; those edits receive `409 Conflict`. Revisions are internal: existing request and response bodies stay unchanged. Bounds violations and edits that would empty the edition or any page receive `422`; the content and annotations remain unchanged.
+
+A valid offset from an older editor view cannot be distinguished from an intentional edit without client context. Internal concurrency checks cover changes during request processing, not this cross-request ambiguity.
 
 ## Delete Edition
 
@@ -177,7 +180,7 @@ curl "https://api-l25bgmwqoa-uc.a.run.app/v2/texts/TXT123/editions?edition_type=
 POST /v2/texts/{text_id}/editions
 ```
 
-Creates an edition, stores its content, creates the required initial annotation, and schedules search segmentation in the background.
+Creates an edition, stores its content, creates the required initial annotation, and requests a best-effort content-search update.
 
 Diplomatic request:
 
@@ -274,8 +277,8 @@ so note the following:
 ### Span layout rules
 
 A span is any range with `0 <= start <= end`. An empty span, where `start` equals `end`, marks a
-position rather than covering text: it is how a blank folio and a heading with no content of its own
-are recorded. A span with `start` greater than `end` is rejected with `422`.
+position rather than covering text, such as a heading with no content of its own.
+A span with `start` greater than `end` is rejected with `422`. Each page must cover at least one character.
 
 Wherever spans appear as a list, that list must follow one of three layouts:
 
@@ -285,12 +288,11 @@ Wherever spans appear as a list, that list must follow one of three layouts:
 | `pages` within a volume | contiguous |
 | `volumes` within a pagination | sorted and non-overlapping, in volume index order; gaps are allowed |
 | sections at one level of a table of contents | sorted and non-overlapping; gaps are allowed |
-| `segments` within a segmentation | sorted by `start`; segments may overlap |
+| `segments` within a segmentation | contiguous: no overlaps or gaps |
 
 Two rules are not about layout. A table of contents subsection must sit inside its parent's span, and
-volume indexes must be unique, with `null` allowed only for a single volume. Content patch operations
-are the one place where an empty range is refused, because deleting or replacing zero characters does
-nothing.
+volume indexes must be unique, with `null` allowed only for a single volume. Content delete and replace operations
+also require a nonempty range.
 
 ## Edition Annotation Collections
 
@@ -412,10 +414,9 @@ carve up that text between them. Each volume must therefore start at or after th
 ends, and a pagination whose volumes overlap or run counter to their index order is rejected with
 `422`. Adjacent volumes are fine: volume 35 may start exactly where volume 34 ends.
 
-A folio with no text is a page whose single line is empty at the position where the folio sits, for
-example `{"reference": "1b", "lines": [{"start": 8, "end": 8}]}` between a page ending at `8` and the
-next page starting at `8`. Two blank folios at the same position are stored but their order between
-each other is not preserved.
+Empty pages are rejected with `422`, including pages with no lines or only zero-width lines.
+A page must cover at least one character. Page order follows character offsets; no separate ordering
+property is stored. Content edits that would empty any page are also rejected with `422`.
 
 ### Table of contents
 

@@ -31,7 +31,7 @@ Categories provide a hierarchical taxonomy system for organizing texts. Each cat
 Development: https://api-l25bgmwqoa-uc.a.run.app
 Production: https://api-aq25662yyq-uc.a.run.app
 Test: https://api-kwgjscy6gq-uc.a.run.app
-Local: http://127.0.0.1:5001/pecha-backend-test-3a4d0/us-central1/api
+Local: http://127.0.0.1:8000
 ```
 
 ---

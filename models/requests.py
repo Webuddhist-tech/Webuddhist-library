@@ -6,7 +6,7 @@ from .annotation import (
     PaginationInput,
     SegmentationInput,
 )
-from .base import NonEmptyStr, OpenPechaModel
+from .base import LanguageFilter, NonEmptyStr, OpenPechaModel
 from .edition import EditionInput
 from .enums import EditionType
 
@@ -25,7 +25,7 @@ class AlignmentPaginationParams(AnnotationSegmentsPaginationParams):
 
 
 class TextFilter(OpenPechaModel):
-    language: str | None = None
+    language: LanguageFilter | None = None
     title: NonEmptyStr | None = Field(default=None, min_length=2, description="Filter by title, minimum 2 characters")
     category_id: str | None = None
     tag_id: str | None = Field(default=None, description="Comma-separated application tag IDs.")
@@ -72,7 +72,7 @@ class EditionsQueryParams(OpenPechaModel):
 class RelatedSegmentsFilter(OpenPechaModel):
     text_id: str | None = Field(default=None, description="Filter related segments by text ID")
     edition_id: str | None = Field(default=None, description="Filter related segments by edition ID")
-    language: str | None = Field(default=None, description="Filter related segments by text language")
+    language: LanguageFilter | None = Field(default=None, description="Filter related segments by text language")
 
 
 class DirectRelatedSegmentsQueryParams(PaginationParams, RelatedSegmentsFilter):
@@ -118,14 +118,6 @@ class LanguageCreateRequest(OpenPechaModel):
 
 class ApplicationCreateRequest(OpenPechaModel):
     name: NonEmptyStr
-
-
-class SearchQueryParams(OpenPechaModel):
-    query: NonEmptyStr = Field(..., description="Search query")
-    search_type: str = Field(default="hybrid", description="Type of search")
-    limit: int = Field(default=10, ge=1, le=100, description="Maximum number of results")
-    title: str | None = Field(None, description="Filter by title")
-    return_text: bool = Field(default=True, description="Include full text content")
 
 
 class SegmentsQueryParams(OpenPechaModel):

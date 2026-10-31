@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, LiteralString
 
+from database.content_state import read_value, touch_edition
 from database.database_validator import DatabaseValidator
 from exceptions import DataNotFoundError, InvalidRequestError
 from models.alignment import EditionAlignmentInput, EditionAlignmentOutput, EditionAlignmentPairOutput
@@ -59,15 +60,15 @@ class AlignmentDatabase:
       -[:SEGMENT_OF]->(target_segmentation:Segmentation)<-[:HAS_SEGMENTATION]-(target_edition)
     CALL (source_segment) {
       MATCH (source_span:Span)-[:SPAN_OF]->(source_segment)
-      WHERE source_span.start < source_span.end
-      WITH source_span ORDER BY source_span.start
+
+      WITH source_span ORDER BY source_span.start, source_span.end
       RETURN collect({start: source_span.start, end: source_span.end}) AS source_lines,
              min(source_span.start) AS source_min_start
     }
     CALL (target_segment) {
       MATCH (target_span:Span)-[:SPAN_OF]->(target_segment)
-      WHERE target_span.start < target_span.end
-      WITH target_span ORDER BY target_span.start
+
+      WITH target_span ORDER BY target_span.start, target_span.end
       RETURN collect({start: target_span.start, end: target_span.end}) AS target_lines,
              min(target_span.start) AS target_min_start
     }
@@ -84,8 +85,8 @@ class AlignmentDatabase:
             WHERE ($application IS NULL
               OR (target_tag)-[:BELONGS_TO]->(:Application {id: $application}))
             | target_tag.id] AS target_tag_ids
-    ORDER BY source_edition.id, source_segmentation.id, source_min_start, source_segment.id,
-             target_edition.id, target_segmentation.id, target_min_start, target_segment.id
+    ORDER BY source_edition.id, source_segmentation.id, source_min_start, source_lines[-1].end, source_segment.id,
+             target_edition.id, target_segmentation.id, target_min_start, target_lines[-1].end, target_segment.id
     SKIP $offset
     LIMIT $limit
     RETURN {
@@ -135,12 +136,7 @@ class AlignmentDatabase:
     ) -> None:
         async with self._db.get_session() as session:
             await session.execute_write(
-                lambda tx: AlignmentDatabase.replace_with_transaction(
-                    tx,
-                    source_edition_id,
-                    target_edition_id,
-                    alignment,
-                )
+                AlignmentDatabase.replace_with_transaction, source_edition_id, target_edition_id, alignment
             )
 
     async def get(
@@ -154,6 +150,8 @@ class AlignmentDatabase:
     ) -> list[EditionAlignmentPairOutput]:
         async with self._db.get_session() as session:
             return await session.execute_read(
+                read_value,
+                source_edition_id,
                 lambda tx: AlignmentDatabase.get_with_transaction(
                     tx,
                     source_edition_id,
@@ -161,20 +159,20 @@ class AlignmentDatabase:
                     offset=offset,
                     limit=limit,
                     application=application,
-                )
+                ),
             )
 
     async def get_all_for_edition(self, edition_id: str) -> list[EditionAlignmentOutput]:
         async with self._db.get_session() as session:
             return await session.execute_read(
-                lambda tx: AlignmentDatabase.get_all_for_edition_with_transaction(tx, edition_id)
+                read_value,
+                edition_id,
+                lambda tx: AlignmentDatabase.get_all_for_edition_with_transaction(tx, edition_id),
             )
 
     async def delete(self, source_edition_id: str, target_edition_id: str) -> None:
         async with self._db.get_session() as session:
-            await session.execute_write(
-                lambda tx: AlignmentDatabase.delete_with_transaction(tx, source_edition_id, target_edition_id)
-            )
+            await session.execute_write(AlignmentDatabase.delete_with_transaction, source_edition_id, target_edition_id)
 
     @staticmethod
     async def replace_with_transaction(
@@ -183,7 +181,8 @@ class AlignmentDatabase:
         target_edition_id: str,
         alignment: EditionAlignmentInput,
     ) -> None:
-        await AlignmentDatabase._validate_edition_pair(tx, source_edition_id, target_edition_id)
+        for edition_id in sorted({source_edition_id, target_edition_id}):
+            await touch_edition(tx, edition_id)
         await AlignmentDatabase._validate_segment_references(tx, source_edition_id, target_edition_id, alignment)
         await tx.run(
             AlignmentDatabase.DELETE_EDITION_PAIR_QUERY,
@@ -233,7 +232,8 @@ class AlignmentDatabase:
         source_edition_id: str,
         target_edition_id: str,
     ) -> None:
-        await AlignmentDatabase._validate_edition_pair(tx, source_edition_id, target_edition_id)
+        for edition_id in sorted({source_edition_id, target_edition_id}):
+            await touch_edition(tx, edition_id)
         await tx.run(
             AlignmentDatabase.DELETE_EDITION_PAIR_QUERY,
             source_edition_id=source_edition_id,

@@ -335,14 +335,6 @@ class TestGetAllTextsV2:
         assert len(data) == 0
 
 
-    async def test_get_all_metadata_multiple_filters_with_title_requires_catalog_search(
-        self, client
-    ):
-        """Combining exact filters with title search requires catalog OpenSearch."""
-        response = await client.get("/v2/texts?language=en&title=Root")
-
-        assert response.status_code == 503
-        assert response.json()["error"] == "Catalog search is required for text title search"
 
     async def test_get_all_metadata_filter_by_author_and_language(self, client, test_database, test_person_data):
         """Test combining author_id and language filters"""
@@ -532,12 +524,6 @@ class TestGetSingleTextV2:
         assert data[0]["title"]["en"] == "Test text"
         assert data[0]["id"] == text_id
 
-    async def test_get_texts_filter_by_alternative_title_requires_catalog_search(self, client):
-        """Alternative title search is also backed by catalog OpenSearch."""
-        response = await client.get("/v2/texts?title=Unique Alternative")
-
-        assert response.status_code == 503
-        assert response.json()["error"] == "Catalog search is required for text title search"
 
     async def test_get_single_translation_metadata_success(self, client, test_database, test_person_data):
         """Test successfully retrieving a translation text"""
@@ -560,7 +546,6 @@ class TestGetSingleTextV2:
         translation_data = {
             "title": {"bo": "སྒྱུར་བའི་ཚིག་སྒྲུབ།", "en": "Translation text"},
             "language": "bo",
-            "category_id": category_id,
             "translation_of": target_id,
             "contributions": [{"type": "person", "id": person_id, "role": "translator"}],
         }
@@ -734,13 +719,19 @@ class TestPostTextV2:
             "language": "bo",
             "translation_of": root_id,
             "contributions": [{"type": "person", "id": person_id, "role": "translator"}],
-            "category_id": category_id
         }
         response = await client.post("/v2/texts", json=translation_data)
 
         assert response.status_code == 201
         data = response.json()
         assert "id" in data
+
+        stored = (await client.get(f"/v2/texts/{data['id']}")).json()
+        assert stored["translation_of"] == root_id
+        assert stored["category_id"] == category_id
+        assert stored["title"] == translation_data["title"]
+        root = (await client.get(f"/v2/texts/{root_id}")).json()
+        assert root["translations"] == [data["id"]]
 
     async def test_create_commentary_with_valid_root_target_success(self, client, test_database, test_person_data):
         """Test successfully creating a COMMENTARY with a valid root target"""
@@ -773,6 +764,13 @@ class TestPostTextV2:
         data = response.json()
         assert "id" in data
 
+        stored = (await client.get(f"/v2/texts/{data['id']}")).json()
+        assert stored["commentary_of"] == root_id
+        assert stored["category_id"] == category_id
+        assert stored["title"] == commentary_data["title"]
+        root = (await client.get(f"/v2/texts/{root_id}")).json()
+        assert root["commentaries"] == [data["id"]]
+
     async def test_create_translation_with_invalid_root_target(self, client, test_database, test_person_data):
         """Test creating a TRANSLATION with an invalid root target"""
         person = PersonInput.model_validate(test_person_data)
@@ -786,7 +784,6 @@ class TestPostTextV2:
             "language": "bo",
             "translation_of": "invalid_target",
             "contributions": [{"type": "person", "id": person_id, "role": "translator"}],
-            "category_id": category_id
         }
         response = await client.post("/v2/texts", json=translation_data)
 
@@ -927,7 +924,7 @@ class TestPostTextV2:
 
         response = await client.post("/v2/texts", json=text_data)
 
-        assert response.status_code in (404, 422)
+        assert response.status_code == 422
         data = response.json()
         assert "error" in data
 
@@ -1822,8 +1819,8 @@ class TestPatchTextV2:
             get_data = get_response.json()
             assert get_data["license"] == license_value
 
-    async def test_patch_text_missing_body_returns_400(self, client, test_database, test_person_data):
-        """Test that missing request body returns 400"""
+    async def test_patch_text_missing_body_returns_422(self, client, test_database, test_person_data):
+        """Test that a missing request body returns 422."""
         person = PersonInput.model_validate(test_person_data)
         person_id = await test_database.person.create(person)
 
@@ -2365,4 +2362,3 @@ class TestGetEditionsV2:
         assert edition["bdrc"] == "W55555"
         assert edition["wiki"] == "Q66666"
         assert edition["colophon"] == "Round trip colophon"
-

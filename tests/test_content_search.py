@@ -1,32 +1,72 @@
 # ruff: noqa: ANN001, ANN201, E501, S101
 import pytest
 
+from catalog_search import CatalogSearchService
 from catalog_search.service import _index_body as catalog_index_body
 from config import settings
-from content_search.service import _build_chunk_documents, _index_body as content_index_body
+from content_search import ContentSearchService
+from content_search.service import _index_body as content_index_body
 from identifier import generate_id
 from main import create_app
-from models.annotation import SegmentWithContextOutput, Span
 from models.base import LocalizedString
 from models.contribution import PersonContributionInput
 from models.enums import ContributorRole, EditionType
 from models.person import PersonInput
 from models.text import TextInput
+from search_client import create_search_client
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_non_testing_startup_requires_opensearch_endpoint(monkeypatch) -> None:
+async def test_non_testing_startup_allows_missing_opensearch_endpoint(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+    import main
+    db = SimpleNamespace(verify_connectivity=AsyncMock(), close=AsyncMock())
+    storage = SimpleNamespace(connect=AsyncMock(), close=AsyncMock())
     monkeypatch.setattr(settings, "opensearch_endpoint", "")
+    monkeypatch.setattr(settings, "neo4j_uri", "bolt://test")
+    monkeypatch.setattr(main, "Database", Mock(return_value=db))
+    monkeypatch.setattr(main, "Storage", Mock(return_value=storage))
+    search = Mock(side_effect=AssertionError("Search must stay disabled"))
+    monkeypatch.setattr(main, "create_search_client", search)
+    monkeypatch.setattr(main, "setup_telemetry", Mock())
+    monkeypatch.setattr(main, "shutdown_telemetry", Mock())
     app = create_app(testing=False)
-
-    with pytest.raises(RuntimeError, match="OPENSEARCH_ENDPOINT is required"):
-        async with app.router.lifespan_context(app):
-            pass
+    async with app.router.lifespan_context(app):
+        db.verify_connectivity.assert_awaited_once()
+        storage.connect.assert_awaited_once()
+        assert app.state.db is db and app.state.storage is storage
+        assert getattr(app.state, "content_search", None) is None
+        assert getattr(app.state, "catalog_search", None) is None
+    search.assert_not_called()
+    db.close.assert_awaited_once()
+    storage.close.assert_awaited_once()
 
 
 def test_search_indexes_use_one_primary_shard() -> None:
     assert content_index_body()["settings"]["number_of_shards"] == 1
     assert catalog_index_body()["settings"]["number_of_shards"] == 1
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize("name,service_type,mapping", [
+    ("content-search", ContentSearchService, content_index_body),
+    ("catalog-search", CatalogSearchService, catalog_index_body),
+])
+async def test_startup_keeps_existing_concrete_index_and_documents(_opensearch_endpoint, name, service_type, mapping):
+    async with create_search_client(endpoint=_opensearch_endpoint, region="", auth_mode="none") as client:
+        await client.indices.create(index=name, body=mapping())
+        try:
+            document = {"id": "kept"}
+            await client.index(index=name, id="kept", body=document)
+            before = await client.indices.get(index=name)
+            await service_type(client=client, index_name=name).setup_index()
+            after = await client.indices.get(index=name)
+            assert after[name]["settings"]["index"]["uuid"] == before[name]["settings"]["index"]["uuid"]
+            assert (await client.get(index=name, id="kept"))["_source"] == document
+            assert not await client.indices.exists_alias(name=name)
+        finally:
+            await client.indices.delete(index=name)
 
 
 async def _create_person(db) -> str:
@@ -56,35 +96,6 @@ async def _create_critical_edition(search_client, text_id: str, content: str, se
     assert response.status_code == 201, response.json()
     return response.json()["id"]
 
-
-def _segment(segment_id: str, start: int, end: int) -> SegmentWithContextOutput:
-    return SegmentWithContextOutput(
-        id=segment_id,
-        segmentation_id="segmentation",
-        edition_id="edition",
-        text_id="text",
-        lines=[Span(start=start, end=end)],
-    )
-
-
-def test_overlapping_chunks_cover_boundary_matches():
-    documents = _build_chunk_documents(
-        text_id="text",
-        edition_id="edition",
-        edition_type=EditionType.CRITICAL.value,
-        language="bo",
-        title={"bo": "Title"},
-        source=None,
-        content="0123456789",
-        segments=[_segment("s1", 0, 4), _segment("s2", 4, 8), _segment("s3", 8, 10)],
-        chunk_chars=6,
-        chunk_overlap_chars=3,
-    )
-
-    boundary_document = next(document for document in documents if "4567" in document["content"])
-    assert boundary_document["context_span_start"] == 3
-    assert boundary_document["context_span_end"] == 9
-    assert {segment["id"] for segment in boundary_document["segments"]} == {"s1", "s2", "s3"}
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -253,22 +264,6 @@ class TestContentSearch:
         assert delete_response.status_code == 204
 
         assert (await search_client.get("/v2/content-search", params={"query": "delete", "search_type": "exact"})).json() == []
-
-    async def test_delete_all_documents_clears_stale_index_data(
-        self,
-        search_client,
-        test_database,
-        content_search,
-    ):
-        person_id = await _create_person(test_database)
-        text_id = await _create_text(test_database, person_id)
-        await _create_critical_edition(search_client, text_id, "clearable phrase", [(0, 16)])
-
-        assert (await search_client.get("/v2/content-search", params={"query": "clearable"})).json()
-
-        await content_search.delete_all_documents()
-
-        assert (await search_client.get("/v2/content-search", params={"query": "clearable"})).json() == []
 
     async def test_segmentation_changes_reindex_edition_content(self, search_client, test_database):
         person_id = await _create_person(test_database)

@@ -40,34 +40,17 @@ Alternative names/titles are indexed and searched the same way as primary labels
 
 ## Operations
 
-The catalog index is derived data and is kept in sync automatically:
+API mutations schedule best-effort background updates. Work category/tag changes and tag deletion refresh affected translations. Failed or reordered updates can leave stale results; manual reindexing repairs them. There is no separate worker or persistent job queue.
 
-- Creating or updating a person/text reindexes its catalog document in the background.
-- Deleting a person/text removes its catalog document.
-- Adding or removing a tag on a text reindexes the text.
-- Existing persons and texts can be bulk indexed with `python -m scripts.catalog_search reindex`.
+Search hydrates current canonical records and skips deleted hits; pagination offsets count valid results. Searches inspect at most 10,000 candidates, so results can be incomplete and `has_more: false` does not guarantee that no further matches exist. Base-language filters include variants; a complete language tag is specific. Matching is case-insensitive for language tags.
 
-## Setup
-
-Create the index if it does not exist, then backfill existing records:
+Stop API/import writers before rebuilding:
 
 ```bash
-python -m scripts.catalog_search setup-index
-python -m scripts.catalog_search reindex
+python -m scripts.reindex --writes-paused
 ```
 
-When the mapping or analyzers change, recreate the index before reindexing:
-
-```bash
-python -m scripts.catalog_search recreate-index
-python -m scripts.catalog_search reindex
-```
-
-Target specific records instead of a full backfill:
-
-```bash
-python -m scripts.catalog_search reindex --person-id P123 --text-id T456
-```
+Replacement indexes are built and checked before an atomic switch that preserves the configured name, `catalog-search`. The first rebuild replaces a concrete index with an alias of the same name; subsequent rebuilds retain previous backing indexes. See [the cutover runbook](../design/cutover.md) for backup and rollback details.
 
 ## Deployment Prerequisite
 
@@ -90,7 +73,7 @@ OPENSEARCH_BDRC_PLUGIN_ZIP=/absolute/path/to/analysis-bdrc.zip
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OPENSEARCH_ENDPOINT` | OpenSearch endpoint URL (required for catalog search) | - |
-| `OPENSEARCH_CATALOG_INDEX` | Catalog index name | `catalog-search` |
+| `OPENSEARCH_CATALOG_INDEX` | Catalog index or alias name | `catalog-search` |
 | `OPENSEARCH_AUTH_MODE` | `none`, `basic`, or `aws` | `none` |
 | `OPENSEARCH_USERNAME` | Username for `basic` auth | - |
 | `OPENSEARCH_PASSWORD` | Password for `basic` auth | - |
@@ -101,7 +84,7 @@ Relevant code:
 
 - `routers/persons.py`, `routers/texts.py`
 - `catalog_search/service.py`
-- `catalog_search/opensearch_client.py`
+- `search_client.py`
 - `models/requests.py`
-- `scripts/catalog_search.py`
+- `scripts/reindex.py`
 - `tests/test_catalog_search.py`

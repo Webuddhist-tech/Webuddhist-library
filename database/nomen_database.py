@@ -7,75 +7,59 @@ from .database_validator import DatabaseValidator
 if TYPE_CHECKING:
     from neo4j import AsyncManagedTransaction
 
-    from .database import Database
-
 
 class NomenDatabase:
-    CREATE_QUERY: LiteralString = """
-    OPTIONAL MATCH (primary:Nomen {id: $primary_nomen_id})
-    CREATE (n:Nomen {id: $nomen_id})
-    WITH n, primary
-    CALL (*) {
-        WHEN primary IS NOT NULL THEN { CREATE (n)-[:ALTERNATIVE_OF]->(primary) }
+    CREATE_MANY_QUERY: LiteralString = """
+    UNWIND $nomens AS data
+    CREATE (n:Nomen {id: data.id})
+    CALL (n, data) {
+        UNWIND data.localizations AS item
+        MATCH (l:Language {code: item.base})
+        CREATE (n)-[:HAS_LOCALIZATION]->(:LocalizedText {text: item.text})
+            -[:HAS_LANGUAGE {bcp47: item.language}]->(l)
     }
-    WITH n
-    CALL (n) {
-        UNWIND $localized_texts AS lt
-        MATCH (l:Language {code: lt.base_lang_code})
-        CREATE (n)-[:HAS_LOCALIZATION]->(locText:LocalizedText {text: lt.text})
-            -[:HAS_LANGUAGE {bcp47: lt.bcp47_tag}]->(l)
-        RETURN count(*) AS _
-    }
-    RETURN n.id as nomen_id
+    RETURN n.id AS id
     """
 
-    def __init__(self, db: Database) -> None:
-        self._db = db
+    LINK_ALTERNATIVES_QUERY: LiteralString = """
+    MATCH (primary:Nomen {id: $primary_id})
+    UNWIND $alternative_ids AS alternative_id
+    MATCH (alternative:Nomen {id: alternative_id})
+    CREATE (alternative)-[:ALTERNATIVE_OF]->(primary)
+    FINISH
+    """
+
+    @staticmethod
+    async def create_many_with_transaction(tx: AsyncManagedTransaction, nomens: dict[str, dict[str, str]]) -> None:
+        await DatabaseValidator.validate_language_codes_exist(
+            tx, sorted({language.split("-")[0].lower() for texts in nomens.values() for language in texts})
+        )
+        rows = [
+            {
+                "id": nomen_id,
+                "localizations": [
+                    {"base": language.split("-")[0].lower(), "language": language, "text": text}
+                    for language, text in texts.items()
+                ],
+            }
+            for nomen_id, texts in nomens.items()
+        ]
+        result = await tx.run(NomenDatabase.CREATE_MANY_QUERY, nomens=rows)
+        if {record["id"] for record in await result.data()} != set(nomens):
+            raise RuntimeError("Incomplete nomen creation")
 
     @staticmethod
     async def create_with_transaction(
         tx: AsyncManagedTransaction, primary_text: dict[str, str], alternative_texts: list[dict[str, str]] | None = None
     ) -> str:
-        base_codes = {tag.split("-")[0].lower() for tag in primary_text}
-        for alt_text in alternative_texts or []:
-            base_codes.update(tag.split("-")[0].lower() for tag in alt_text)
-        await DatabaseValidator.validate_language_codes_exist(tx, list(base_codes))
-
-        primary_localized_texts = [
-            {
-                "base_lang_code": bcp47_tag.split("-")[0].lower(),
-                "bcp47_tag": bcp47_tag,
-                "text": text,
-            }
-            for bcp47_tag, text in primary_text.items()
-        ]
-
-        primary_nomen_id = generate_id()
-        result = await tx.run(
-            NomenDatabase.CREATE_QUERY,
-            nomen_id=primary_nomen_id,
-            primary_nomen_id=None,
-            localized_texts=primary_localized_texts,
-        )
-        record = await result.single(strict=True)
-        created_primary_id = str(record["nomen_id"])
-
-        for alt_text in alternative_texts or []:
-            localized_texts = [
-                {
-                    "base_lang_code": bcp47_tag.split("-")[0].lower(),
-                    "bcp47_tag": bcp47_tag,
-                    "text": text,
-                }
-                for bcp47_tag, text in alt_text.items()
-            ]
-
-            alternative_result = await tx.run(
-                NomenDatabase.CREATE_QUERY,
-                nomen_id=generate_id(),
-                primary_nomen_id=created_primary_id,
-                localized_texts=localized_texts,
+        primary_id = generate_id()
+        alternatives = {generate_id(): texts for texts in alternative_texts or []}
+        await NomenDatabase.create_many_with_transaction(tx, {primary_id: primary_text, **alternatives})
+        if alternatives:
+            result = await tx.run(
+                NomenDatabase.LINK_ALTERNATIVES_QUERY,
+                primary_id=primary_id,
+                alternative_ids=list(alternatives),
             )
-            await alternative_result.single(strict=True)
-
-        return created_primary_id
+            await result.consume()
+        return primary_id

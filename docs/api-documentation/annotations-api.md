@@ -59,7 +59,7 @@ Annotations are created and listed by type under an edition. Durchen and Yigchun
 }
 ```
 
-Segments must be sorted by their first line's start offset. Lines inside each segment must be continuous.
+Segments and their lines must be ordered and contiguous: each span's end must equal the next span's start. Overlaps and gaps are rejected with HTTP 422, both here and when submitting segmentation with an edition. Zero-width markers are allowed at boundaries. A segmentation may cover a portion of the edition; full-edition coverage is not required.
 `type` is optional and defaults to `"paragraph"`.
 `reference` is optional for general segmentation use, but required for segments that will be aligned by reference.
 
@@ -113,6 +113,8 @@ If one source segment aligns to multiple target segments, repeat the `source_seg
 ```
 
 `index` is the volume number in the source collection (for example `34` for Degé Kangyur vol. 34). A single-volume pagination may set `index` to `null` or omit it, meaning the text has only ever had one volume. Multi-volume pagination requires an `index` on every volume, and indexes must be unique; they do not need to start at `1` or be continuous.
+Every page must cover at least one character. Pages with no lines or only zero-width lines receive `422`.
+Page order follows character offsets. Content edits that would empty a page are rejected.
 
 ### Create table of contents
 
@@ -464,7 +466,7 @@ Response:
 ## Example Calls
 
 ```bash
-curl "https://api-l25bgmwqoa-uc.a.run.app/v2/editions/ED123/segmentations" \
+curl "https://api-l25bgmwqoa-uc.a.run.app/v2/editions/ED123/segmentation" \
   -H "X-API-Key: your_api_key"
 
 curl -X POST "https://api-l25bgmwqoa-uc.a.run.app/v2/editions/ED123/durchens" \

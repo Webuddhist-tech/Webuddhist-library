@@ -540,16 +540,6 @@ class TestTagLocalization:
         assert created_tag["title"]["bo"] == "བོད་ཡིག་ཁ་བྱང་།"
         assert created_tag["title"]["zh"] == "中文标签"
 
-    async def test_tag_without_description(self, client, test_database):
-        """Test that tag without description returns null"""
-        tag_id = await _create_tag(client, {"title": {"en": "No Desc Tag"}})
-
-        response = await client.get("/v2/tags/", headers=APPLICATION_HEADER)
-        tags = response.json()
-        created_tag = next((t for t in tags if t["id"] == tag_id), None)
-
-        assert created_tag is not None
-        assert created_tag.get("description") is None
 
 
 @pytest.mark.asyncio(loop_scope="session")

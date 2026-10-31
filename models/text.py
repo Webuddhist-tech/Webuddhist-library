@@ -16,7 +16,6 @@ class TextBase(OpenPechaModel):
     language: NonEmptyStr
     commentary_of: NonEmptyStr | None = None
     translation_of: NonEmptyStr | None = None
-    category_id: NonEmptyStr
     license: LicenseType = LicenseType.PUBLIC_DOMAIN_MARK
 
     @model_validator(mode="after")
@@ -41,8 +40,18 @@ class TextBase(OpenPechaModel):
 
 
 class TextInput(TextBase):
+    category_id: NonEmptyStr | None = None
     contributions: list[ContributionInputItem] = Field(default_factory=list)
     tag_ids: list[NonEmptyStr] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_category(self) -> Self:
+        if self.translation_of:
+            if "category_id" in self.model_fields_set:
+                raise ValueError("Translations inherit their category; category_id must not be supplied")
+        elif self.category_id is None:
+            raise ValueError("category_id is required for original texts and commentaries")
+        return self
 
 
 class TextPatch(PatchModel):
@@ -53,19 +62,23 @@ class TextPatch(PatchModel):
     alt_titles: list[LocalizedString] | None = None
     language: NonEmptyStr | None = None
     category_id: NonEmptyStr | None = None
+    expected_category_id: NonEmptyStr | None = None
     license: LicenseType | None = None
     contributions: list[ContributionInputItem] | None = None
     tag_ids: list[NonEmptyStr] | None = None
 
     @model_validator(mode="after")
     def remove_duplicate_alt_titles(self) -> Self:
+        if self.expected_category_id is not None and self.category_id is None:
+            raise ValueError("expected_category_id requires category_id")
         if self.alt_titles is not None and self.title is not None:
-            self.alt_titles = _dedupe(list(self.alt_titles), self.title) or None
+            self.alt_titles = _dedupe(list(self.alt_titles), self.title)
         return self
 
 
 class TextOutput(TextBase):
     id: NonEmptyStr
+    category_id: NonEmptyStr
     contributions: list[ContributionOutputItem]
     commentaries: list[str] = Field(default_factory=list)
     translations: list[str] = Field(default_factory=list)

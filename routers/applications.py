@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Path, status
 
-from dependencies import get_api_key, get_db
+from dependencies import get_admin_key, get_db
 from models.requests import ApplicationCreateRequest
 from models.responses import ApplicationResponse
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/v2/applications", tags=["Applications"])
 )
 async def create_application(
     data: ApplicationCreateRequest,
-    _api_key: Annotated[str, Depends(get_api_key)],
+    _api_key: Annotated[str, Depends(get_admin_key)],
     db: Annotated[Database, Depends(get_db)],
 ) -> ApplicationResponse:
     """Create a new application."""
@@ -40,7 +40,7 @@ async def create_application(
 )
 async def delete_application(
     application_id: Annotated[str, Path(description="The ID of the application")],
-    _api_key: Annotated[str, Depends(get_api_key)],
+    _api_key: Annotated[str, Depends(get_admin_key)],
     db: Annotated[Database, Depends(get_db)],
 ) -> None:
     """Delete an unused application."""

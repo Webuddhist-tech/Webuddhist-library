@@ -4,7 +4,6 @@ from typing import Self
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession
 
 from .alignment_database import AlignmentDatabase
-from .annotation.attribute_database import AttributeDatabase
 from .annotation.bibliographic_database import BibliographicDatabase
 from .annotation.mark_database import MarkDatabase
 from .annotation.note_database import NoteDatabase
@@ -27,23 +26,13 @@ logger = getLogger(__name__)
 
 
 class AnnotationDatabase:
-    Segmentation = SegmentationDatabase
-    Pagination = PaginationDatabase
-    TableOfContents = TableOfContentsDatabase
-    Note = NoteDatabase
-    Bibliographic = BibliographicDatabase
-    Mark = MarkDatabase
-    Attribute = AttributeDatabase
-
     def __init__(self, db: Database) -> None:
-        self._db = db
         self.segmentation = SegmentationDatabase(db)
         self.pagination = PaginationDatabase(db)
         self.table_of_contents = TableOfContentsDatabase(db)
         self.note = NoteDatabase(db)
         self.bibliographic = BibliographicDatabase(db)
         self.mark = MarkDatabase(db)
-        self.attributes = AttributeDatabase(db)
 
 
 class Database:
@@ -81,7 +70,7 @@ class Database:
         self.language = LanguageDatabase(db=self)
         self.category = CategoryDatabase(db=self)
         self.tag = TagDatabase(db=self)
-        self.span = SpanDatabase(db=self)
+        self.span = SpanDatabase()
 
     async def verify_connectivity(self) -> None:
         await self._driver.verify_connectivity()
@@ -94,13 +83,17 @@ class Database:
         await self._driver.close()
 
     async def __aenter__(self) -> Self:
-        await self.verify_connectivity()
+        try:
+            await self.verify_connectivity()
+        except BaseException:
+            await self.close()
+            raise
         return self
 
     async def __aexit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
+        _exc_type: type[BaseException] | None,
+        _exc_val: BaseException | None,
+        _exc_tb: object,
     ) -> None:
         await self.close()

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import pytest
 
 from database.neo4j_triggers import DATABASE_NAME, SYSTEM_DATABASE_NAME, TRIGGERS, install_triggers
+from neo4j.exceptions import ClientError
+from tests.schema_contract import EXPECTED_TRIGGERS
 
 
 @dataclass(frozen=True)
@@ -19,13 +21,16 @@ def _query_with_metadata(setup_query: str, trigger_query: str) -> str:
         {setup_query}
     }}
     WITH createdNodes, createdRelationships, deletedRelationships, deletedNodes
-    CALL apoc.cypher.run(
+    CALL apoc.cypher.doIt(
         $trigger_query,
         {{
             createdNodes: createdNodes,
             createdRelationships: createdRelationships,
             deletedRelationships: deletedRelationships,
-            deletedNodes: deletedNodes
+            deletedNodes: deletedNodes,
+            assignedNodeProperties: {{}}, removedNodeProperties: {{}},
+            assignedRelationshipProperties: {{}}, removedRelationshipProperties: {{}},
+            assignedLabels: {{}}, removedLabels: {{}}
         }}
     ) YIELD value
     RETURN value
@@ -100,6 +105,12 @@ def _no_self_case(rel_type: str) -> str:
 
 def _custom_cases() -> dict[str, str]:
     return {
+        "enforce_toc_hierarchy": """
+            CREATE (a:TableOfContentsSection {id: randomUUID()})
+            CREATE (b:TableOfContentsSection {id: randomUUID()})
+            CREATE (a)-[:SUBSECTION_OF]->(b), (b)-[:SUBSECTION_OF]->(a)
+            RETURN [a, b] AS createdNodes, [] AS createdRelationships, [] AS deletedRelationships, [] AS deletedNodes
+        """,
         "enforce_edition_has_segmentation_max_one": """
             CREATE (edition:Edition {id: randomUUID()})
             CREATE (seg_1:Segmentation {id: randomUUID()})
@@ -239,7 +250,7 @@ def _build_trigger_cases() -> list[TriggerCase]:
         source_label, _, _ = req_meta
         cases.append(TriggerCase(name=name, setup_query=_required_existence_case(source_label)))
 
-    expected = {trigger["name"] for trigger in TRIGGERS}
+    expected = EXPECTED_TRIGGERS
     actual = {case.name for case in cases}
     assert expected == actual, f"Missing trigger cases: {sorted(expected - actual)}"
     return cases
@@ -254,7 +265,7 @@ TRIGGER_QUERY_BY_NAME = {trigger["name"]: trigger["query"] for trigger in TRIGGE
 async def test_each_trigger_rejects_intentional_invalid_data(test_database, case: TriggerCase) -> None:
     query = _query_with_metadata(case.setup_query, TRIGGER_QUERY_BY_NAME[case.name])
     async with test_database.get_session() as session:
-        with pytest.raises(Exception, match=case.name):
+        with pytest.raises(ClientError, match=case.name):
             result = await session.run(query, trigger_query=TRIGGER_QUERY_BY_NAME[case.name])
             await result.consume()
 

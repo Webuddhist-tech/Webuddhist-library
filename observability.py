@@ -15,9 +15,10 @@ Configuration (environment variables):
 """
 
 import logging
-import os
 import re
 from collections.abc import Callable
+from functools import wraps
+from types import CoroutineType
 from typing import Any, LiteralString
 
 from fastapi import FastAPI
@@ -32,13 +33,11 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.trace import StatusCode
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 _state: dict[str, bool] = {"neo4j_patched": False}
-
-
-def _is_enabled() -> bool:
-    return os.getenv("OTEL_ENABLED", "false").lower() == "true"
 
 
 def _extract_operation(query: str) -> str:
@@ -90,11 +89,11 @@ async def _traced_run(
     truncated_query = query_str[:500] + "..." if len(query_str) > 500 else query_str
 
     with tracer.start_as_current_span(
-        f"neo4j {operation}",
+        f"neo4j dispatch {operation}",
         kind=trace.SpanKind.CLIENT,
         attributes={
             "db.system": "neo4j",
-            "db.name": "neo4j",
+            "db.name": settings.neo4j_database,
             "db.operation.name": operation,
             "db.query.text": truncated_query,
             "db.neo4j.source": source,
@@ -108,6 +107,22 @@ async def _traced_run(
             raise
 
 
+def _trace_transaction[**P, T](
+    operation: str, original: Callable[P, CoroutineType[Any, Any, T]]
+) -> Callable[P, CoroutineType[Any, Any, T]]:
+    @wraps(original)
+    async def measured(*args: P.args, **kwargs: P.kwargs) -> T:
+        # execute_read/write return only after lazy results, commit, and retries finish.
+        with trace.get_tracer("openpecha-api").start_as_current_span(
+            f"neo4j transaction {operation}",
+            kind=trace.SpanKind.CLIENT,
+            attributes={"db.system": "neo4j", "db.name": settings.neo4j_database},
+        ):
+            return await original(*args, **kwargs)
+
+    return measured
+
+
 def _instrument_neo4j_driver() -> None:
     if _state["neo4j_patched"]:
         return
@@ -115,17 +130,19 @@ def _instrument_neo4j_driver() -> None:
     AsyncSession.run = _traced_session_run  # ty: ignore[invalid-assignment]
     AsyncManagedTransaction.run = _traced_tx_run  # ty: ignore[invalid-assignment]
 
+    AsyncSession.execute_read = _trace_transaction("read", AsyncSession.execute_read)  # ty: ignore[invalid-assignment]
+    AsyncSession.execute_write = _trace_transaction("write", AsyncSession.execute_write)  # ty: ignore[invalid-assignment]
     _state["neo4j_patched"] = True
     logger.info("Neo4j AsyncSession.run() and AsyncManagedTransaction.run() instrumented for tracing")
 
 
 def setup_telemetry(app: FastAPI) -> None:
-    if not _is_enabled():
+    if not settings.otel_enabled:
         logger.info("OpenTelemetry disabled (set OTEL_ENABLED=true to activate)")
         return
 
-    service_name = os.getenv("OTEL_SERVICE_NAME", "openpecha-api")
-    environment = os.getenv("ENVIRONMENT", "development")
+    service_name = settings.otel_service_name
+    environment = settings.environment or "development"
 
     resource = Resource.create(
         {
@@ -137,7 +154,7 @@ def setup_telemetry(app: FastAPI) -> None:
 
     provider = TracerProvider(resource=resource)
 
-    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    otlp_endpoint = settings.otel_exporter_otlp_endpoint
     if otlp_endpoint:
         otlp_exporter = OTLPSpanExporter()
         provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
@@ -155,10 +172,7 @@ def setup_telemetry(app: FastAPI) -> None:
 
     HTTPXClientInstrumentor().instrument()
 
-    LoggingInstrumentor().instrument(
-        log_hook=_log_hook,
-        set_logging_format=True,
-    )
+    LoggingInstrumentor().instrument(set_logging_format=True)
 
     _instrument_neo4j_driver()
 
@@ -171,17 +185,10 @@ def setup_telemetry(app: FastAPI) -> None:
 
 def shutdown_telemetry() -> None:
     """Flush and shut down the tracer provider. Call during app shutdown."""
-    if not _is_enabled():
+    if not settings.otel_enabled:
         return
 
     provider = trace.get_tracer_provider()
     if isinstance(provider, TracerProvider):
         provider.shutdown()
         logger.info("OpenTelemetry shut down")
-
-
-def _log_hook(span: trace.Span, record: logging.LogRecord) -> None:
-    if span and span.is_recording():
-        ctx = span.get_span_context()
-        record.otelTraceID = format(ctx.trace_id, "032x")
-        record.otelSpanID = format(ctx.span_id, "016x")

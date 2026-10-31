@@ -2,12 +2,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Path, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, Path, Query, Request, UploadFile, status
 
-from content_search import ContentSearchService
-from dependencies import get_api_key, get_content_search, get_db, get_storage
-from exceptions import DataValidationError
-from identifier import generate_id
+from content_service import create_recording, edit_content
+from database.content_state import read_state
+from dependencies import get_api_key, get_db, get_storage
 from models.alignment import EditionAlignmentOutput
 from models.annotation import (
     BibliographicMetadataInput,
@@ -24,12 +23,12 @@ from models.annotation import (
     TableOfContentsInput,
     TableOfContentsOutput,
 )
-from models.content_operation import ContentOperation, DeleteOperation, InsertOperation, ReplaceOperation
+from models.content_operation import ContentOperation
 from models.edition import EditionOutput
-from models.enums import AudioFormat
 from models.recording import RecordingInput, RecordingOutput
 from models.requests import AnnotationSegmentsPaginationParams
 from models.responses import IdResponse, PaginatedResponse, PresignedUrlResponse
+from search_updates import update_search
 
 if TYPE_CHECKING:
     from database import Database
@@ -71,8 +70,9 @@ async def get_content(
     span_end: Annotated[int | None, Query(description="End position for text slice")] = None,
 ) -> str:
     """Fetch base text content for an edition."""
-    edition = await db.edition.get(edition_id=edition_id)
-    base_text = await storage.retrieve_base_text(text_id=edition.text_id, edition_id=edition_id)
+    async with db.get_session() as session:
+        state = await session.execute_read(read_state, edition_id)
+    base_text = await storage.read_text(state.object_key)
 
     if span_start is not None and span_end is not None:
         base_text = base_text[span_start:span_end]
@@ -92,13 +92,10 @@ async def get_content_url(
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> PresignedUrlResponse:
     """Generate a direct download URL for an edition's full base text."""
-    edition = await db.edition.get(edition_id=edition_id)
+    async with db.get_session() as session:
+        state = await session.execute_read(read_state, edition_id)
     issued_at = datetime.now(UTC)
-    url = await storage.generate_base_text_url(
-        text_id=edition.text_id,
-        edition_id=edition_id,
-        expires_in=CONTENT_URL_EXPIRATION_SECONDS,
-    )
+    url = await storage.generate_url(state.object_key, expires_in=CONTENT_URL_EXPIRATION_SECONDS)
     return PresignedUrlResponse(
         url=url,
         expires_at=issued_at + timedelta(seconds=CONTENT_URL_EXPIRATION_SECONDS),
@@ -126,17 +123,16 @@ async def get_segmentation_annotation(
     description="Add the edition's segmentation.",
 )
 async def post_segmentation_annotation(
+    request: Request,
+    background_tasks: BackgroundTasks,
     edition_id: Annotated[str, Path(description="The ID of the edition")],
     data: SegmentationInput,
-    background_tasks: BackgroundTasks,
     _api_key: Annotated[str, Depends(get_api_key)],
     db: Annotated[Database, Depends(get_db)],
-    storage: Annotated[Storage, Depends(get_storage)],
-    content_search: Annotated[ContentSearchService, Depends(get_content_search)],
 ) -> IdResponse:
     """Add a segmentation annotation to an edition."""
     annotation_id = await db.annotation.segmentation.add(edition_id, data)
-    background_tasks.add_task(content_search.index_edition, edition_id, db, storage)
+    background_tasks.add_task(update_search, request, "edition", edition_id)
     return IdResponse(id=annotation_id)
 
 
@@ -167,15 +163,14 @@ async def get_segmentation_segments(
     description="Delete the edition's segmentation.",
 )
 async def delete_segmentation_annotation(
-    edition_id: Annotated[str, Path(description="The ID of the edition")],
+    request: Request,
     background_tasks: BackgroundTasks,
+    edition_id: Annotated[str, Path(description="The ID of the edition")],
     _api_key: Annotated[str, Depends(get_api_key)],
     db: Annotated[Database, Depends(get_db)],
-    storage: Annotated[Storage, Depends(get_storage)],
-    content_search: Annotated[ContentSearchService, Depends(get_content_search)],
 ) -> None:
     await db.annotation.segmentation.delete_by_edition(edition_id)
-    background_tasks.add_task(content_search.index_edition, edition_id, db, storage)
+    background_tasks.add_task(update_search, request, "edition", edition_id)
 
 
 @router.get(
@@ -366,45 +361,8 @@ async def post_recording(
     db: Annotated[Database, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> IdResponse:
-    """Add an audio recording to an edition."""
     data = RecordingInput.model_validate_json(metadata)
-
-    audio_format = AudioFormat.from_content_type(audio.content_type)
-    if audio_format is None:
-        raise DataValidationError(
-            f"Unsupported audio content type '{audio.content_type}'; "
-            f"supported formats: {', '.join(sorted(AudioFormat))}"
-        )
-
-    content = await audio.read()
-    if not content:
-        raise DataValidationError("Audio file is empty")
-
-    recording_id = generate_id()
-    logger.info("Adding recording %s to edition %s (%d bytes)", recording_id, edition_id, len(content))
-
-    await db.recording.add(
-        edition_id=edition_id,
-        recording=data,
-        recording_id=recording_id,
-        audio_format=audio_format,
-        size_bytes=len(content),
-    )
-
-    try:
-        await storage.store_recording(
-            edition_id=edition_id,
-            recording_id=recording_id,
-            extension=audio_format.value,
-            audio=content,
-            content_type=audio_format.content_type,
-        )
-    except Exception:
-        logger.exception("S3 write failed for recording %s, removing its metadata", recording_id)
-        await db.recording.delete(recording_id)
-        raise
-
-    return IdResponse(id=recording_id)
+    return IdResponse(id=await create_recording(db, storage, edition_id, data, audio))
 
 
 @router.get(
@@ -428,15 +386,15 @@ async def get_related_editions(
     description="Delete edition metadata and associated database annotations.",
 )
 async def delete_edition(
+    request: Request,
+    background_tasks: BackgroundTasks,
     edition_id: Annotated[str, Path(description="The ID of the edition")],
     _api_key: Annotated[str, Depends(get_api_key)],
     db: Annotated[Database, Depends(get_db)],
-    content_search: Annotated[ContentSearchService, Depends(get_content_search)],
 ) -> None:
     logger.info("Deleting edition with edition ID: %s", edition_id)
-    await db.edition.get(edition_id=edition_id)
     await db.edition.delete(edition_id)
-    await content_search.delete_edition(edition_id)
+    background_tasks.add_task(update_search, request, "edition", edition_id)
 
 
 @router.patch(
@@ -446,84 +404,13 @@ async def delete_edition(
     description="Apply a text operation (INSERT, DELETE, or REPLACE) to the edition's content.",
 )
 async def patch_content(
+    request: Request,
+    background_tasks: BackgroundTasks,
     edition_id: Annotated[str, Path(description="The ID of the edition")],
     data: ContentOperation,
-    background_tasks: BackgroundTasks,
     _api_key: Annotated[str, Depends(get_api_key)],
     db: Annotated[Database, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
-    content_search: Annotated[ContentSearchService, Depends(get_content_search)],
 ) -> None:
-    op = data.operation
-    logger.info("Applying %s operation to edition %s", op.type, edition_id)
-
-    edition = await db.edition.get(edition_id=edition_id)
-
-    if isinstance(op, InsertOperation):
-        await db.span.adjust_spans_for_insert(
-            edition_id=edition_id,
-            position=op.position,
-            length=len(op.text),
-        )
-        try:
-            await storage.apply_insert(
-                text_id=edition.text_id,
-                edition_id=edition_id,
-                position=op.position,
-                text=op.text,
-            )
-        except Exception:
-            logger.exception("S3 write failed after span adjustment for INSERT on %s, compensating", edition_id)
-            await db.span.adjust_spans_for_delete(
-                edition_id=edition_id,
-                start=op.position,
-                end=op.position + len(op.text),
-            )
-            raise
-    elif isinstance(op, DeleteOperation):
-        await db.span.adjust_spans_for_delete(
-            edition_id=edition_id,
-            start=op.start,
-            end=op.end,
-        )
-        try:
-            await storage.apply_delete(
-                text_id=edition.text_id,
-                edition_id=edition_id,
-                start=op.start,
-                end=op.end,
-            )
-        except Exception:
-            logger.exception("S3 write failed after span adjustment for DELETE on %s, compensating", edition_id)
-            await db.span.adjust_spans_for_insert(
-                edition_id=edition_id,
-                position=op.start,
-                length=op.end - op.start,
-            )
-            raise
-    elif isinstance(op, ReplaceOperation):
-        await db.span.adjust_spans_for_replace(
-            edition_id=edition_id,
-            start=op.start,
-            end=op.end,
-            new_len=len(op.text),
-        )
-        try:
-            await storage.apply_replace(
-                text_id=edition.text_id,
-                edition_id=edition_id,
-                start=op.start,
-                end=op.end,
-                text=op.text,
-            )
-        except Exception:
-            logger.exception("S3 write failed after span adjustment for REPLACE on %s, compensating", edition_id)
-            await db.span.adjust_spans_for_replace(
-                edition_id=edition_id,
-                start=op.start,
-                end=op.start + len(op.text),
-                new_len=op.end - op.start,
-            )
-            raise
-
-    background_tasks.add_task(content_search.index_edition, edition_id, db, storage)
+    await edit_content(db, storage, edition_id, data)
+    background_tasks.add_task(update_search, request, "edition", edition_id)

@@ -10,6 +10,8 @@ from pydantic import (
     model_validator,
 )
 
+type LanguageFilter = Annotated[str, StringConstraints(to_lower=True, pattern=r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")]
+
 type NonEmptyStr = Annotated[StrictStr, StringConstraints(min_length=1, pattern=r"\S")]
 
 

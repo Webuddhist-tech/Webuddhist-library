@@ -118,9 +118,7 @@ Validation rules:
 - `format` and `size_bytes` are derived from the upload and cannot be set by the caller.
 - `duration_ms` is not derived from the file; supply it if you want it recorded.
 
-The metadata row is written before the storage upload. If the upload fails, the metadata is removed before the error is returned, so a failed request leaves nothing behind.
-
-Uploads travel through the API process, so they are bounded by the platform's request size limit, which is 32 MiB on Cloud Run. Split longer readings into multiple recordings on the same edition.
+Audio is uploaded to a fresh S3 key before metadata is committed. A failed request can leave an unused storage object, but cannot publish recording metadata for an unsuccessful upload.
 
 Error responses:
 
@@ -178,12 +176,12 @@ The audio file itself cannot be patched. Replace a recording's audio by deleting
 DELETE /v2/recordings/{recording_id}
 ```
 
-Deletes the recording and its stored audio file, returning `204 No Content`.
+Deletes the recording metadata, returning `204 No Content`. Its audio remains in storage.
 
 Delete behavior:
 
 - Deletes the `Recording` node, its `Contribution` nodes, its cues, and its title `Nomen` and `LocalizedText` subgraph.
-- Deletes the audio object from storage. This is the one place the API removes a stored file.
+- Retains the audio object in storage; the application does not clean up unreferenced files.
 - Does not delete the parent `Edition`, the narrating `Person` or `AI`, or lookup nodes such as `RoleType`, `LicenseType`, and `Language`.
 
 Deleting the parent edition cascade-deletes its recordings' database rows along with the rest of its annotations, but leaves their audio objects in storage, matching how edition deletion already treats base text.
@@ -264,6 +262,10 @@ Cue spans follow `PATCH /v2/editions/{edition_id}/content` with the same rules a
 - Routers: `routers/recordings.py`; the edition-scoped list and create routes live in `routers/editions.py`.
 - Models: `models/recording.py` and `models/contribution.py`.
 - Database: `database/recording_database.py`, with the shared `Contribution` queries in `database/contribution_database.py`.
-- Storage: `storage/s3.py` stores audio under `recordings/{edition_id}/{recording_id}.{format}`.
+- Storage: `storage/s3.py` stores audio at `recordings/{edition_id}/{recording_id}.{format}`, derived from recording metadata. Audio is never replaced under the same recording ID.
 - Cues are stored as `(:Span)-[:SPAN_OF]->(:Cue {start_ms, end_ms})-[:CUE_OF]->(:Recording)`. `Cue` has no `id`, because cues are only written and read in bulk.
 - `database/span_database.py` adjusts cue spans with the annotation rules, and deletes a `Cue` once its span is deleted.
+
+## Upload lifecycle
+
+Uploads use the multipart upload's spooled file rather than a second full in-memory copy. Metadata is published only after storage succeeds. There is no upload journal, cleanup queue, or client revision/operation identifier. All unreferenced storage objects are retained.

@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-import logging
+from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from typing import TYPE_CHECKING, Any
 
-from catalog_search.opensearch_client import CatalogSearchOpenSearchClient
+from database.database_validator import DatabaseValidator
 from exceptions import DataNotFoundError
 from models.contribution import PersonContributionOutput
 from models.person import PersonOutput
 from models.text import TextOutput
+from search_client import SearchIndex
 
 if TYPE_CHECKING:
+    from opensearchpy import AsyncOpenSearch
+
     from database import Database
     from models.requests import PersonFilter, TextFilter
-
-logger = logging.getLogger(__name__)
 
 PERSON_DOCUMENT_TYPE = "person"
 TEXT_DOCUMENT_TYPE = "text"
@@ -31,100 +33,82 @@ class CatalogSearchService:
     def __init__(
         self,
         *,
-        endpoint: str,
+        client: AsyncOpenSearch,
         index_name: str,
-        region: str,
-        auth_mode: str = "basic",
-        username: str = "",
-        password: str = "",
-        request_timeout: int = 120,
-        max_retries: int = 3,
     ) -> None:
-        self._client = CatalogSearchOpenSearchClient(
-            endpoint=endpoint,
-            index_name=index_name,
-            region=region,
-            auth_mode=auth_mode,
-            username=username,
-            password=password,
-            request_timeout=request_timeout,
-            max_retries=max_retries,
-        )
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    async def connect(self) -> None:
-        await self._client.connect()
-        await self.setup_index()
-
-    async def close(self) -> None:
-        await self._client.close()
+        self.index = SearchIndex(client, index_name)
 
     async def setup_index(self) -> None:
-        if await self._client.index_exists():
-            return
-        await self._client.create_index(_index_body())
+        await self.index.setup_index(_index_body())
 
-    async def delete_index(self) -> None:
-        await self._client.delete_index()
-
-    async def refresh_index(self) -> None:
-        await self._client.refresh_index()
-
-    async def analyze(self, body: dict) -> dict:
-        return await self._client.analyze(body)
-
-    async def index_person(self, person_id: str, db: Database, *, refresh: bool = True) -> None:
+    async def prepare_document(self, kind: str, entity_id: str, db: Database) -> dict:
         try:
-            person = await db.person.get(person_id)
+            if kind == PERSON_DOCUMENT_TYPE:
+                document = _person_document(await db.person.get(entity_id))
+            else:
+                document = _text_document(await db.text.get(entity_id))
         except DataNotFoundError:
-            await self.delete_person(person_id, refresh=refresh)
-            return
+            return {"id": _document_id(kind, entity_id), "document_type": kind, "deleted": True}
+        return document
 
-        await self._client.bulk_index([_person_document(person)], refresh=refresh)
-        logger.info("Indexed person catalog document %s", person_id)
-
-    async def index_text(self, text_id: str, db: Database, *, refresh: bool = True) -> None:
-        try:
-            text = await db.text.get(text_id)
-        except DataNotFoundError:
-            await self.delete_text(text_id, refresh=refresh)
-            return
-
-        await self._client.bulk_index([_text_document(text)], refresh=refresh)
-        logger.info("Indexed text catalog document %s", text_id)
-
-    async def delete_person(self, person_id: str, *, refresh: bool = True) -> None:
-        await self._client.delete_document(_document_id(PERSON_DOCUMENT_TYPE, person_id), refresh=refresh)
-
-    async def delete_text(self, text_id: str, *, refresh: bool = True) -> None:
-        await self._client.delete_document(_document_id(TEXT_DOCUMENT_TYPE, text_id), refresh=refresh)
-
-    async def search_person_ids(self, *, query: str, filters: PersonFilter, offset: int, limit: int) -> list[str]:
-        response = await self._client.search(
-            _search_body(
-                query=query,
-                document_type=PERSON_DOCUMENT_TYPE,
-                offset=offset,
-                limit=limit,
-                filters=_person_filters(filters),
-            )
+    async def search_persons(
+        self, *, db: Database, query: str, filters: PersonFilter, offset: int, limit: int
+    ) -> list[PersonOutput]:
+        return await self._search(
+            query, PERSON_DOCUMENT_TYPE, _person_filters(filters), offset, limit, db.person.get_by_ids
         )
-        return [hit["_source"]["person_id"] for hit in response.get("hits", {}).get("hits", [])]
 
-    async def search_text_ids(self, *, query: str, filters: TextFilter, offset: int, limit: int) -> list[str]:
-        response = await self._client.search(
-            _search_body(
-                query=query,
-                document_type=TEXT_DOCUMENT_TYPE,
-                offset=offset,
-                limit=limit,
-                filters=_text_filters(filters),
-            )
+    async def search_texts(
+        self,
+        *,
+        db: Database,
+        query: str,
+        filters: TextFilter,
+        offset: int,
+        limit: int,
+        application: str | None = None,
+    ) -> list[TextOutput]:
+        if filters.language:
+            async with db.get_session() as session:
+                await session.execute_read(
+                    DatabaseValidator.validate_language_code_exists, filters.language.split("-")[0]
+                )
+        return await self._search(
+            query,
+            TEXT_DOCUMENT_TYPE,
+            _text_filters(filters),
+            offset,
+            limit,
+            lambda ids: db.text.get_by_ids(ids, application=application),
         )
-        return [hit["_source"]["text_id"] for hit in response.get("hits", {}).get("hits", [])]
+
+    async def _search[T: (PersonOutput, TextOutput)](
+        self,
+        query: str,
+        kind: str,
+        filters: list[dict],
+        offset: int,
+        limit: int,
+        hydrate: Callable[[list[str]], Awaitable[list[T]]],
+    ) -> list[T]:
+        body = _search_body(query=query, document_type=kind, limit=100, filters=filters)
+        items: list[T] = []
+        skipped = scanned = 0
+
+        async with aclosing(self.index.pages(body)) as pages:
+            async for hits in pages:
+                scanned += len(hits)
+                ids = [hit["_source"][f"{kind}_id"] for hit in hits]
+                for item in await hydrate(ids):
+                    if skipped < offset:
+                        skipped += 1
+                    else:
+                        items.append(item)
+                        if len(items) == limit:
+                            return items
+                if scanned >= 10000:
+                    return items
+        return items
 
 
 def _index_body() -> dict:
@@ -220,6 +204,7 @@ def _index_body() -> dict:
             },
         },
         "mappings": {
+            "_meta": {"projection_version": 2},
             "properties": {
                 "id": {"type": "keyword"},
                 "document_type": {"type": "keyword"},
@@ -289,7 +274,7 @@ def _text_document(text: TextOutput) -> dict:
         "text_id": text.id,
         "bdrc": text.bdrc,
         "wiki": text.wiki,
-        "language": text.language,
+        "language": text.language.lower(),
         "category_id": text.category_id,
         "tag_ids": text.tag_ids,
         "contributor_ids": _contributor_ids(text),
@@ -354,11 +339,11 @@ def _contributor_ids(text: TextOutput) -> list[str]:
     )
 
 
-def _search_body(*, query: str, document_type: str, offset: int, limit: int, filters: list[dict]) -> dict:
+def _search_body(*, query: str, document_type: str, limit: int, filters: list[dict]) -> dict:
     fields = _search_fields()
     return {
-        "from": offset,
         "size": limit,
+        "sort": [{"_score": "desc"}, {"id": "asc"}],
         "query": {
             "bool": {
                 "filter": [{"term": {"document_type": document_type}}, *filters],
@@ -420,12 +405,16 @@ def _person_filters(filters: PersonFilter) -> list[dict]:
 def _text_filters(filters: TextFilter) -> list[dict]:
     filter_clauses = _optional_term_filters(
         {
-            "language": filters.language,
             "category_id": filters.category_id,
             "bdrc": filters.bdrc,
             "wiki": filters.wiki,
         }
     )
+    if language := filters.language:
+        language_filter: dict = {"term": {"language": language}}
+        if "-" not in language:
+            language_filter = {"bool": {"should": [language_filter, {"prefix": {"language": language + "-"}}]}}
+        filter_clauses.append(language_filter)
     tag_ids = filters.tag_ids
     if filters.tag_id_match == "all":
         filter_clauses.extend({"term": {"tag_ids": tag_id}} for tag_id in tag_ids)

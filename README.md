@@ -9,7 +9,7 @@ openpecha-backend/
 ├── main.py                 # FastAPI entry point
 ├── routers/                # API route handlers
 ├── database/               # Database layer
-├── models.py               # Pydantic models
+├── models/                 # Pydantic models
 ├── tests/                  # Test suite
 ├── requirements.txt        # Production dependencies
 ├── requirements_dev.txt    # Development dependencies
@@ -62,13 +62,13 @@ The API will be available at `http://localhost:8000`
 
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
-- **Health check**: http://localhost:8000/__/health
+- **Liveness**: http://localhost:8000/__/health
 
 The app initializes Neo4j and S3 when `NEO4J_URI` is set in `.env`. To run only
 docs/health locally without database startup, temporarily unset `NEO4J_URI`:
 
 ```bash
-unset NEO4J_URI
+export NEO4J_URI=""
 ./.venv/bin/uvicorn main:app --reload
 ```
 
@@ -132,7 +132,7 @@ sudo systemctl restart openpecha-api
 
 ### Environment Configuration
 
-- **Neo4j**: Configured via `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` in
+- **Neo4j**: Configured via `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` in
   `.env`
 - **AWS S3**: Configured via `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
   `AWS_S3_BUCKET` in `.env`
@@ -145,4 +145,5 @@ sudo systemctl restart openpecha-api
 
 ## Documentation
 
-API documentation available at: https://pecha-backend.web.app/docs
+See the [API guide](docs/api-documentation/README.md) for route documentation and examples.
+The running API exposes Swagger UI at `/docs`, ReDoc at `/redoc`, and its OpenAPI schema at `/openapi.json`.

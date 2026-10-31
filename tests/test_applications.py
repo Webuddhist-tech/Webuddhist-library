@@ -27,7 +27,7 @@ class TestApplications:
 
     async def test_create_application_normalizes_to_lowercase(self, client, test_database):
         """Test input WeBuddhist is stored as webuddhist in both id and name."""
-        payload = {"name": "WeBuddhist"}
+        payload = {"name": "  WeBuddhist  "}
         response = await client.post("/v2/applications", json=payload)
         assert response.status_code == 201
         data = response.json()

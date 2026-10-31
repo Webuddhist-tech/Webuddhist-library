@@ -45,12 +45,8 @@ async def get_recording_audio(
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> RedirectResponse:
     """Redirect to the recording's audio in storage, which serves range requests directly."""
-    edition_id, audio_format = await db.recording.get_storage_location(recording_id)
-    url = await storage.generate_recording_url(
-        edition_id=edition_id,
-        recording_id=recording_id,
-        extension=audio_format.value,
-    )
+    key = await db.recording.get_storage_location(recording_id)
+    url = await storage.generate_url(key)
     return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
@@ -118,19 +114,12 @@ async def update_recording(
     "/{recording_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete recording",
-    description="Delete a recording's metadata and its stored audio file.",
+    description="Delete a recording's metadata. Its audio remains in storage.",
 )
 async def delete_recording(
     recording_id: Annotated[str, Path(description="The ID of the recording")],
     _api_key: Annotated[str, Depends(get_api_key)],
     db: Annotated[Database, Depends(get_db)],
-    storage: Annotated[Storage, Depends(get_storage)],
 ) -> None:
     """Delete a recording."""
-    edition_id, audio_format = await db.recording.get_storage_location(recording_id)
     await db.recording.delete(recording_id)
-    await storage.delete_recording(
-        edition_id=edition_id,
-        recording_id=recording_id,
-        extension=audio_format.value,
-    )

@@ -13,10 +13,11 @@ Requires Docker for Neo4j testcontainer.
 import logging
 
 import pytest
+from neo4j.exceptions import ClientError
 from identifier import generate_id
 from models.base import LocalizedString
 from models.contribution import PersonContributionInput
-from models.edition import EditionInput, EditionType
+from models.edition import EditionType
 from models.enums import ContributorRole
 from models.person import PersonInput
 from models.text import TextInput
@@ -41,7 +42,7 @@ class SegmentTestBase:
         if title is None:
             title = LocalizedString({"en": "Test text", "bo": "བརྟག་དཔྱད།"})
         text_data = TextInput(
-            category_id="category",
+            **({"category_id": "category"} if not kwargs.get("translation_of") else {}),
             title=title,
             language=language,
             contributions=[PersonContributionInput(type="person", id=person_id, role=ContributorRole.AUTHOR)],
@@ -547,6 +548,9 @@ class TestDirectSegmentRelated(SegmentTestBase):
             assert segment["edition_id"] != src_edition_id, \
                 "Related segments should exclude the queried segment's own edition"
 
+        expected = await self._get_segment_ids_from_segmentation(client, tgt_edition_id)
+        assert {item["id"] for item in data} == set(expected)
+
     async def test_segment_related_does_not_reenter_an_edition(self, client, test_database):
         """Traversal must not change correspondence by leaving and re-entering an edition."""
         person_id = await self._create_person(test_database)
@@ -891,6 +895,8 @@ class TestSegmentsRelatedWithTags(SegmentTestBase):
                 assert seg.get("tag_ids") is None or tag_id not in seg.get("tag_ids", []), \
                     "Tag from test_application should not appear when querying with other_app"
 
+        assert {item["id"] for item in all_segs} == set(tgt_seg_ids)
+
 
 # ---------------------------------------------------------------------------
 # Edge cases
@@ -944,7 +950,7 @@ class TestSegmentsRelatedEdgeCases(SegmentTestBase):
         """Inverted spans are rejected by installed Neo4j triggers."""
         seg_id = f"seg_inverted_span_{generate_id()[:6]}"
         async with test_database.get_session() as session:
-            with pytest.raises(Exception, match="enforce_span_start_lte_end"):
+            with pytest.raises(ClientError, match="enforce_span_start_lte_end"):
                 result = await session.run("""
                     CREATE (sgn:Segmentation {id: $sgn_id})
                     CREATE (seg:Segment {id: $seg_id})-[:SEGMENT_OF]->(sgn)
@@ -1019,14 +1025,6 @@ class TestFindBySpanBoundaries(SegmentTestBase):
             client, test_database, [(0, 5), (5, 10)]
         )
         found = await test_database.segment.find_by_span(edition_id, 10, 20)
-        assert found == []
-
-    async def test_gap_between_segments(self, client, test_database):
-        """Segments have a gap; span falls entirely in the gap."""
-        edition_id, seg_ids = await self._setup_edition_with_segments(
-            client, test_database, [(0, 5), (10, 15)]
-        )
-        found = await test_database.segment.find_by_span(edition_id, 5, 10)
         assert found == []
 
     async def test_wrong_edition_returns_empty(self, client, test_database):

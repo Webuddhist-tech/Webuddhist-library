@@ -4,7 +4,7 @@ from typing import LiteralString
 
 from neo4j import AsyncManagedTransaction
 
-from exceptions import DataNotFoundError, DataValidationError, InvalidRequestError
+from exceptions import DataNotFoundError, DataValidationError, ForbiddenError, InvalidRequestError
 from models.contribution import ContributionInputItem, PersonContributionInput
 from models.text import TextInput
 
@@ -52,28 +52,10 @@ class DatabaseValidator:
                 raise DataValidationError(f"Referenced {label} do not exist: {', '.join(missing)}")
 
     @staticmethod
-    async def validate_text_creation(tx: AsyncManagedTransaction, text: TextInput, work_id: str) -> None:
+    async def validate_text_creation(tx: AsyncManagedTransaction, text: TextInput) -> None:
         await DatabaseValidator.validate_text_title_unique(tx, dict(text.title.root))
 
-        if not text.commentary_of and not text.translation_of:
-            await DatabaseValidator.validate_original_text_uniqueness(tx, work_id)
-
         await DatabaseValidator.validate_contribution_references(tx, text.contributions)
-
-    @staticmethod
-    async def validate_original_text_uniqueness(tx: AsyncManagedTransaction, work_id: str) -> None:
-        query = """
-        MATCH (w:Work {id: $work_id})
-        RETURN count { (w)<-[:TEXT_OF {original: true}]-(:Text) } AS existing_count
-        """
-
-        result = await tx.run(query, work_id=work_id)
-        record = await result.single()
-
-        if record and record["existing_count"] > 0:
-            raise DataValidationError(
-                f"Work {work_id} already has an original text. Only one original text per work is allowed."
-            )
 
     @staticmethod
     async def validate_text_exists(tx: AsyncManagedTransaction, text_id: str) -> None:
@@ -98,32 +80,6 @@ class DatabaseValidator:
 
         if not record or not record["exists"]:
             raise DataNotFoundError(f"Edition with ID '{edition_id}' not found")
-
-    @staticmethod
-    async def validate_edition_spans(tx: AsyncManagedTransaction, edition_id: str, max_end: int) -> None:
-        """Validate the edition exists and that annotation offsets fit within its content."""
-        query = """
-        MATCH (m:Edition {id: $edition_id})
-        RETURN m.content_length AS content_length
-        """
-
-        result = await tx.run(query, edition_id=edition_id)
-        record = await result.single()
-
-        if record is None:
-            raise DataNotFoundError(f"Edition with ID '{edition_id}' not found")
-
-        content_length = record["content_length"]
-        if content_length is None:
-            raise DataValidationError(
-                f"Edition '{edition_id}' has no recorded content length, so offsets cannot be validated"
-            )
-
-        if max_end > content_length:
-            raise DataValidationError(
-                f"Offsets extend to {max_end} but edition '{edition_id}' content is {content_length} characters; "
-                "offsets must be Unicode code point positions in the edition content"
-            )
 
     @staticmethod
     async def validate_language_code_exists(tx: AsyncManagedTransaction, language_code: str) -> None:
@@ -186,41 +142,52 @@ class DatabaseValidator:
             )
 
     @staticmethod
-    async def validate_category_exists(tx: AsyncManagedTransaction, category_id: str) -> None:
+    async def validate_category_exists(
+        tx: AsyncManagedTransaction, category_id: str, application: str | None = None
+    ) -> None:
         """Validate that a category with the given ID exists.
 
         Raises DataValidationError if the category does not exist.
         """
         query = """
-        RETURN EXISTS { (c:Category {id: $category_id}) } AS exists
+        MATCH (c:Category {id: $category_id})-[:BELONGS_TO]->(app:Application)
+        RETURN app.id AS application
         """
 
         result = await tx.run(query, category_id=category_id)
         record = await result.single()
 
-        if not record or not record["exists"]:
+        if not record:
             raise DataValidationError(
                 f"Category with ID '{category_id}' does not exist. Please provide a valid category_id."
             )
+        if application is not None and record["application"] != application:
+            raise ForbiddenError("Category belongs to another application")
 
     @staticmethod
-    async def validate_tags_exist(tx: AsyncManagedTransaction, tag_ids: list[str]) -> None:
+    async def validate_tags_exist(
+        tx: AsyncManagedTransaction, tag_ids: list[str], application: str | None = None
+    ) -> None:
         """Validate that all given tag IDs exist. Raises DataValidationError listing missing IDs."""
         if not tag_ids:
             return
 
         query = """
         MATCH (t:Tag) WHERE t.id IN $tag_ids
-        WITH collect(DISTINCT t.id) AS found
-        RETURN [x IN $tag_ids WHERE NOT x IN found] AS missing_tags
+        WITH collect(DISTINCT t) AS tags
+        RETURN [x IN $tag_ids WHERE NOT x IN [t IN tags | t.id]] AS missing_tags,
+               [t IN tags WHERE $application IS NOT NULL AND NOT
+                   (t)-[:BELONGS_TO]->(:Application {id: $application}) | t.id] AS foreign_tags
         """
 
-        result = await tx.run(query, tag_ids=tag_ids)
+        result = await tx.run(query, tag_ids=tag_ids, application=application)
         record = await result.single()
         missing_tags = record["missing_tags"] if record else []
 
         if missing_tags:
             raise DataValidationError(f"Referenced tags do not exist: {', '.join(missing_tags)}")
+        if record and record["foreign_tags"]:
+            raise ForbiddenError("Tags belong to another application")
 
     @staticmethod
     async def validate_text_title_unique(tx: AsyncManagedTransaction, title: dict[str, str]) -> None:

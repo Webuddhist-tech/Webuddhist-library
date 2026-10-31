@@ -12,7 +12,7 @@ This document provides comprehensive documentation for all Segments-related endp
    - [Get Segment](#get-segment)
    - [Get Segment Content](#get-segment-content)
    - [Find Related Segments](#find-related-segments)
-   - [Search Segments](#search-segments)
+   - [Search Edition Content](#search-edition-content)
    - [Tag and Untag Segment](#tag-and-untag-segment)
 ---
 
@@ -24,7 +24,7 @@ Segments are portions of edition content defined by character spans (one or more
 
 - **Segment**: A logical unit of text defined by one or more character spans
 - **Segment Type**: A constrained string describing the segment's role: `paragraph`, `verse`, `title`, `back_matter`, `front_matter`, or `top_segment`
-- **Lines**: Character spans that define segment boundaries (can be non-contiguous)
+- **Lines**: Character spans that define segment boundaries; multiple lines must be sorted and adjacent
 - **Segmentation**: Collection of segments that divide an edition's content
 - **Alignment**: Direct `ALIGNED_TO` relationship between existing segments
 - **Related Segments**: Segments that are aligned together across editions
@@ -35,7 +35,7 @@ Segments are not created directly. They are created as part of:
 1. **Edition segmentation** via `POST /v2/editions/{edition_id}/segmentation`
 2. **Edition creation** with inline annotations via `POST /v2/texts/{text_id}/editions`
 
-Text-pair alignment endpoints link existing segments; they do not create new segments.
+Edition-pair alignment endpoints link existing segments; they do not create new segments.
 
 ### Base URL
 
@@ -43,7 +43,7 @@ Text-pair alignment endpoints link existing segments; they do not create new seg
 Development: https://api-l25bgmwqoa-uc.a.run.app
 Production: https://api-aq25662yyq-uc.a.run.app
 Test: https://api-kwgjscy6gq-uc.a.run.app
-Local: http://127.0.0.1:5001/pecha-backend-test-3a4d0/us-central1/api
+Local: http://127.0.0.1:8000
 ```
 
 ---
@@ -132,7 +132,7 @@ GET /v2/segments/{segment_id}/content
 
 **Response Type:** Plain text string (JSON-encoded)
 
-The response contains the actual text content extracted from the edition based on the segment's span(s).
+The response contains text extracted from the immutable edition object associated with the segment's validated spans. Concurrent changes can return `409`; retry the read.
 
 **Error Responses:**
 - `401 Unauthorized`: Missing or invalid API key in deployed environments
@@ -156,7 +156,9 @@ curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/SEG001/content" \
 
 ### Find Related Segments
 
-Find all segments that are directly or transitively aligned to a specific segment. Returns segments connected through direct `ALIGNED_TO` relationships.
+Find segments connected by up to five `ALIGNED_TO` hops in either direction. Traversal includes intermediate segments that do not match the display filters. Results are ordered consistently and paginated after traversal.
+
+Traversal explores up to five alignment hops and visits each segment once. Pagination limits the returned results, not the number of segments explored. Concurrent coordinate/alignment changes can return `409`; retry the read. A base language filter includes variants, while a full language tag selects that variant, case-insensitively.
 
 **Endpoint:**
 ```
@@ -182,8 +184,8 @@ GET /v2/segments/{segment_id}/related
     {
       "id": "SEG001",
       "segmentation_id": "SGN12345678",
-      "edition_id": "M12345678",
-      "text_id": "E12345678",
+      "edition_id": "ED12345678",
+      "text_id": "TXT12345678",
       "type": "paragraph",
       "lines": [{"start": 0, "end": 100}],
       "tag_ids": ["TAG123"]
@@ -228,126 +230,18 @@ curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/SEG001/related?text
 
 ---
 
-### Search Segments
+### Search Edition Content
 
-Search segments by forwarding request to external search API and enriching results with overlapping segmentation annotation segment IDs.
+Use content search to find passages and their segment IDs:
 
-**Endpoint:**
-```
-GET /v2/segments/search
-```
-
-**Parameters:**
-
-| Name | Type | Location | Required | Default | Description |
-|------|------|----------|----------|---------|-------------|
-| `query` | string | query | Yes | - | The search query text |
-| `search_type` | string | query | No | "semantic" | Type of search forwarded to the search service. Common values are `hybrid`, `bm25`, `semantic`, or `exact`. |
-| `limit` | integer | query | No | 10 | Maximum number of results (1-100) |
-| `title` | string | query | No | - | Filter results by title |
-| `return_text` | boolean | query | No | true | Whether to include text content in results |
-
-**Search Types:**
-
-| Type | Description | Best For |
-|------|-------------|----------|
-| `hybrid` | Combines BM25 and semantic search | General purpose, balanced results |
-| `bm25` | Keyword-based ranking (BM25 algorithm) | Exact term matching, keyword search |
-| `semantic` | Vector similarity search | Meaning-based search, conceptual queries |
-| `exact` | Exact text matching | Precise phrase matching |
-
-**Response: 200 OK**
-
-```json
-{
-  "query": "བོད་ཀྱི་རིག་གནས།",
-  "results": [
-    {
-      "id": "SEG_SEARCH_001",
-      "distance": 0.85,
-      "entity": {
-        "text": "Sample text content from the segment"
-      },
-      "segmentation_ids": [
-        "SEG_001",
-        "SEG_002",
-        "SEG_003"
-      ]
-    },
-    {
-      "id": "SEG_SEARCH_002",
-      "distance": 0.78,
-      "entity": {
-        "text": "Another matching text segment"
-      },
-      "segmentation_ids": [
-        "SEG_004",
-        "SEG_005"
-      ]
-    }
-  ],
-  "count": 2
-}
+```http
+GET /v2/content-search
 ```
 
-**Response Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `query` | string | The search query that was used |
-| `results` | array | List of search results with enriched data |
-| `results[].id` | string | Search segmentation segment ID |
-| `results[].distance` | number | Search relevance score/distance |
-| `results[].entity` | object | Additional entity data (includes `text` if return_text=true) |
-| `results[].segmentation_ids` | array | Overlapping segmentation annotation segment IDs |
-| `count` | integer | Number of results returned |
-
-**Key Feature - Segmentation Mapping:**
-
-The search endpoint enriches external search results with local segmentation IDs. For each search result:
-1. The search API returns a segment with its span
-2. The endpoint finds all segmentation annotation segments that overlap with that span
-3. Returns both the search result and the overlapping segmentation IDs
-
-This enables:
-- Mapping search results to your annotation segments
-- Finding related segments via alignment
-- Integrating external search with local segmentation
-
-**Error Responses:**
-- `400 Bad Request`: Invalid query parameters
-- `422 Validation Error`: Validation failed (e.g., invalid search_type, limit out of range)
-- `500 Server Error`: Internal server error
-
-**Example Usage:**
+The endpoint supports `exact` (default) and `similar` search, with optional `text_id` and `edition_id` filters. It returns an array of results containing edition and text IDs, `segment_ids`, context, and spans. See the [Content Search API](content-search-api.md) for the full request and response contract.
 
 ```bash
-# Basic search with default settings
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=བོད་ཀྱི་རིག་གནས།" \
-  -H "X-API-Key: your_api_key"
-
-# Hybrid search with custom limit
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=Heart%20Sutra&search_type=hybrid&limit=20" \
-  -H "X-API-Key: your_api_key"
-
-# BM25 keyword search
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=prajnaparamita&search_type=bm25" \
-  -H "X-API-Key: your_api_key"
-
-# Semantic search
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=emptiness%20teaching&search_type=semantic" \
-  -H "X-API-Key: your_api_key"
-
-# Exact phrase search
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=སྟོང་པ་ཉིད་&search_type=exact" \
-  -H "X-API-Key: your_api_key"
-
-# Search with title filter
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=wisdom&title=Heart%20Sutra" \
-  -H "X-API-Key: your_api_key"
-
-# Search without text content (faster)
-curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/search?query=meditation&return_text=false" \
+curl "https://api-l25bgmwqoa-uc.a.run.app/v2/content-search?query=Heart%20Sutra&search_type=similar&limit=20" \
   -H "X-API-Key: your_api_key"
 ```
 
@@ -377,5 +271,4 @@ curl -X DELETE "https://api-l25bgmwqoa-uc.a.run.app/v2/segments/SEG001/tags/TAG1
 **Developer Notes:**
 - Implemented in `routers/segments.py`.
 - Segment response models live in `models/annotation.py`.
-- Search response models live in `models/search.py`.
-- The search endpoint forwards to `settings.search_api_url` and enriches results by looking up local overlapping segmentation IDs.
+- Content search is implemented in `routers/content_search.py` and `content_search/service.py`, with response models in `models/content_search.py`.

@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, LiteralString
 
 from neo4j.exceptions import ResultNotSingleError
 
+from database.content_state import advance_revision, lock_connected_editions, read_value, touch_edition
 from exceptions import DataConflictError, DataNotFoundError
 
 if TYPE_CHECKING:
@@ -18,7 +19,8 @@ class SegmentationDatabase:
     MATCH (edition)-[:EDITION_OF]->(text:Text)
     RETURN segmentation.id AS id,
            edition.id AS edition_id,
-           text.id AS text_id
+           text.id AS text_id,
+           [(segmentation)-[:HAS_METADATA]->(m:AnnotationMetadata) | m {.name}][0] AS metadata
     ORDER BY id
     """
 
@@ -26,14 +28,14 @@ class SegmentationDatabase:
     MATCH (segment:Segment)-[:SEGMENT_OF]->(segmentation)
     CALL (segment) {
         MATCH (span:Span)-[:SPAN_OF]->(segment)
-        WHERE span.start < span.end
-        WITH span ORDER BY span.start
+
+        WITH span ORDER BY span.start, span.end
         RETURN collect({start: span.start, end: span.end}) AS lines,
                min(span.start) AS min_start
     }
     WITH segment, lines, min_start
     WHERE size(lines) > 0
-    ORDER BY min_start, segment.id
+    ORDER BY min_start, lines[-1].end, segment.id
     RETURN segment.id AS id, segment.type AS type, segment.reference AS reference, lines
     """
 
@@ -64,6 +66,10 @@ class SegmentationDatabase:
     WHERE NOT EXISTS { (edition)-[:HAS_SEGMENTATION]->(:Segmentation) }
     CREATE (edition)-[:HAS_SEGMENTATION]->(segmentation:Segmentation {id: $segmentation_id})
     WITH segmentation
+    FOREACH (metadata IN $metadata |
+        CREATE (segmentation)-[:HAS_METADATA]->(:AnnotationMetadata {id: metadata.id, name: metadata.name})
+    )
+    WITH segmentation
     UNWIND $segments AS segment_data
     CREATE (segment:Segment {id: segment_data.id})-[:SEGMENT_OF]->(segmentation)
     SET segment.reference = segment_data.reference,
@@ -79,7 +85,8 @@ class SegmentationDatabase:
     OPTIONAL MATCH (edition)-[:HAS_SEGMENTATION]->(segmentation:Segmentation)
     OPTIONAL MATCH (segment:Segment)-[:SEGMENT_OF]->(segmentation)
     OPTIONAL MATCH (span:Span)-[:SPAN_OF]->(segment)
-    DETACH DELETE span, segment, segmentation
+    OPTIONAL MATCH (segmentation)-[:HAS_METADATA]->(metadata:AnnotationMetadata)
+    DETACH DELETE span, segment, metadata, segmentation
     FINISH
     """
 
@@ -89,7 +96,7 @@ class SegmentationDatabase:
     async def get_by_edition(self, edition_id: str) -> SegmentationOutput:
         async with self._db.get_session() as session:
             return await session.execute_read(
-                lambda tx: SegmentationDatabase.get_by_edition_with_transaction(tx, edition_id)
+                read_value, edition_id, lambda tx: SegmentationDatabase.get_by_edition_with_transaction(tx, edition_id)
             )
 
     async def get_segments_by_edition(
@@ -101,43 +108,43 @@ class SegmentationDatabase:
     ) -> list[SegmentOutput]:
         async with self._db.get_session() as session:
             return await session.execute_read(
+                read_value,
+                edition_id,
                 lambda tx: SegmentationDatabase.get_segments_by_edition_with_transaction(
                     tx,
                     edition_id,
                     offset=offset,
                     limit=limit,
-                )
+                ),
             )
 
     async def get_all_segments_by_edition(self, edition_id: str) -> list[SegmentOutput]:
         async with self._db.get_session() as session:
             return await session.execute_read(
-                lambda tx: SegmentationDatabase.get_all_segments_by_edition_with_transaction(tx, edition_id)
+                read_value,
+                edition_id,
+                lambda tx: SegmentationDatabase.get_all_segments_by_edition_with_transaction(tx, edition_id),
             )
 
     @staticmethod
     async def add_with_transaction(
         tx: AsyncManagedTransaction, edition_id: str, segmentation: SegmentationInput
     ) -> str:
-        await DatabaseValidator.validate_edition_spans(tx, edition_id, segmentation.max_end)
+        state = await touch_edition(tx, edition_id)
+        state.validate_span(segmentation.max_end)
 
         segmentation_id = generate_id()
 
-        segments_data = [
-            {
-                "id": generate_id(),
-                "type": seg.type.value,
-                "reference": seg.reference,
-                "lines": [{"start": line.start, "end": line.end} for line in seg.lines],
-            }
-            for seg in segmentation.segments
-        ]
+        segments_data = [seg.model_dump(mode="json") | {"id": generate_id()} for seg in segmentation.segments]
 
         result = await tx.run(
             SegmentationDatabase.CREATE_QUERY,
             edition_id=edition_id,
             segmentation_id=segmentation_id,
             segments=segments_data,
+            metadata=[{"id": generate_id(), "name": segmentation.metadata.name}]
+            if segmentation.metadata is not None
+            else [],
         )
         try:
             record = await result.single(strict=True)
@@ -149,9 +156,7 @@ class SegmentationDatabase:
 
     async def add(self, edition_id: str, segmentation: SegmentationInput) -> str:
         async with self._db.get_session() as session:
-            return await session.execute_write(
-                lambda tx: SegmentationDatabase.add_with_transaction(tx, edition_id, segmentation)
-            )
+            return await session.execute_write(SegmentationDatabase.add_with_transaction, edition_id, segmentation)
 
     @staticmethod
     async def get_by_edition_with_transaction(tx: AsyncManagedTransaction, edition_id: str) -> SegmentationOutput:
@@ -206,11 +211,12 @@ class SegmentationDatabase:
 
     async def delete_by_edition(self, edition_id: str) -> None:
         async with self._db.get_session() as session:
-            await session.execute_write(
-                lambda tx: SegmentationDatabase.delete_by_edition_with_transaction(tx, edition_id)
-            )
+            await session.execute_write(SegmentationDatabase.delete_by_edition_with_transaction, edition_id)
 
     @staticmethod
     async def delete_by_edition_with_transaction(tx: AsyncManagedTransaction, edition_id: str) -> None:
-        await DatabaseValidator.validate_edition_exists(tx, edition_id)
+        related = await lock_connected_editions(tx, edition_id)
+        await touch_edition(tx, edition_id)
+        for related_id in related:
+            await advance_revision(tx, related_id)
         await tx.run(SegmentationDatabase.DELETE_BY_EDITION_ID_QUERY, edition_id=edition_id)

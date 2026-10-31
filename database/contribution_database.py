@@ -39,10 +39,11 @@ def contributions_return(source: LiteralString) -> LiteralString:
 class ContributionDatabase:
     """Create and delete Contribution subgraphs hanging off any node that has HAS_CONTRIBUTION.
 
-    The source label is spliced into the query text rather than passed as a dynamic label, which
-    Cypher would accept as `:$($label)`. A dynamic label is unknown at plan time, so the planner
-    falls back to DynamicLabelNodeLookup over every node with that label; splicing keeps the match
-    on the label's unique index.
+    Source labels are trusted LiteralString constants, keeping unique-index seeks explicit.
+    Neo4j 2025.11+ supports property indexes with dynamic labels, subject to planner limitations:
+    https://neo4j.com/docs/cypher-manual/25/clauses/match/#dynamic-match
+    The reviewed 2026.07.1 plan still used DynamicLabelNodeLookup for the dynamic equivalent.
+    Retain static labels unless PROFILE on the deployed version shows comparable DB hits.
     """
 
     @staticmethod

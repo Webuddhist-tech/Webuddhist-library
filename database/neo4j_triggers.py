@@ -53,7 +53,7 @@ def _required_rel_trigger(
                 WITH DISTINCT node
                 WHERE NOT (node IN $deletedNodes)
                   AND NOT (node)-[:{rel_type}]->(:{target_label})
-                WITH collect(node.id) AS ids
+                WITH collect(coalesce(node.id, elementId(node))) AS ids
                 WHERE size(ids) > 0
                 CALL apoc.util.validate(
                     true,
@@ -65,7 +65,7 @@ def _required_rel_trigger(
             "audit": f"""
                 MATCH (n:{source_label})
                 WHERE NOT (n)-[:{rel_type}]->(:{target_label})
-                RETURN n.id AS violating_id
+                RETURN coalesce(n.id, elementId(n)) AS violating_id
             """,
         },
     ]
@@ -92,7 +92,7 @@ def _required_rel_trigger(
                 WITH DISTINCT node
                 WITH node, count {{ (node)-[:{rel_type}]->(:{target_label}) }} AS cnt
                 WHERE cnt > 1
-                WITH collect(node.id) AS ids
+                WITH collect(coalesce(node.id, elementId(node))) AS ids
                 WHERE size(ids) > 0
                 CALL apoc.util.validate(
                     true,
@@ -105,7 +105,7 @@ def _required_rel_trigger(
                 MATCH (n:{source_label})
                 WITH n, count {{ (n)-[:{rel_type}]->(:{target_label}) }} AS cnt
                 WHERE cnt > 1
-                RETURN n.id AS violating_id
+                RETURN coalesce(n.id, elementId(n)) AS violating_id
             """,
             }
         )
@@ -130,7 +130,7 @@ def _rel_target_type_trigger(
             WHERE type(rel) = '{rel_type}'
             WITH rel, startNode(rel) AS source, endNode(rel) AS target
             WHERE NOT target:{target_label}
-            WITH collect(source.id) AS ids
+            WITH collect(coalesce(source.id, elementId(source))) AS ids
             WHERE size(ids) > 0
             CALL apoc.util.validate(
                 true,
@@ -142,109 +142,52 @@ def _rel_target_type_trigger(
         "audit": f"""
             MATCH (n)-[:{rel_type}]->(target)
             WHERE NOT target:{target_label}
-            RETURN n.id AS violating_id
+            RETURN coalesce(n.id, elementId(n)) AS violating_id
         """,
     }
 
 
 TRIGGERS: list[dict] = []
 
-# =========================================================================
-# Work
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_work_has_category",
-        "Every Work must have HAS_CATEGORY->Category",
-        "Work",
-        "HAS_CATEGORY",
-        "Category",
+# Required outgoing relationships; the last field controls maximum cardinality.
+for name, source, relationship, target, cardinality in [
+    ("enforce_work_has_category", "Work", "HAS_CATEGORY", "Category", "one"),
+    ("enforce_tag_belongs_to", "Tag", "BELONGS_TO", "Application", "one"),
+    ("enforce_tag_has_title", "Tag", "HAS_TITLE", "Nomen", "one"),
+    ("enforce_category_belongs_to", "Category", "BELONGS_TO", "Application", "one"),
+    ("enforce_category_has_title", "Category", "HAS_TITLE", "Nomen", "one"),
+    ("enforce_text_has_text_of", "Text", "TEXT_OF", "Work", "one"),
+    ("enforce_text_has_language", "Text", "HAS_LANGUAGE", "Language", "one"),
+    ("enforce_text_has_title", "Text", "HAS_TITLE", "Nomen", "one"),
+    ("enforce_text_has_license", "Text", "HAS_LICENSE", "LicenseType", "one"),
+    ("enforce_edition_has_type", "Edition", "HAS_TYPE", "EditionType", "one"),
+    ("enforce_edition_edition_of", "Edition", "EDITION_OF", "Text", "one"),
+    ("enforce_segment_segment_of", "Segment", "SEGMENT_OF", "Segmentation", "one"),
+    ("enforce_bibmeta_bibliography_of", "BibliographicMetadata", "BIBLIOGRAPHY_OF", "Edition", "one"),
+    ("enforce_bibmeta_has_type", "BibliographicMetadata", "HAS_TYPE", "BibliographyType", "one"),
+    ("enforce_note_note_of", "Note", "NOTE_OF", "Edition", "one"),
+    ("enforce_note_has_type", "Note", "HAS_TYPE", "NoteType", "one"),
+    ("enforce_mark_mark_of", "Mark", "MARK_OF", "Edition", "one"),
+    ("enforce_mark_has_type", "Mark", "HAS_TYPE", "MarkType", "one"),
+    ("enforce_attribute_attribute_of", "Attribute", "ATTRIBUTE_OF", "Edition", "one"),
+    ("enforce_attribute_has_type", "Attribute", "HAS_TYPE", "AttributeType", "one"),
+    ("enforce_pagination_pagination_of", "Pagination", "PAGINATION_OF", "Edition", "one"),
+    ("enforce_volume_volume_of", "Volume", "VOLUME_OF", "Pagination", "one"),
+    ("enforce_page_page_of", "Page", "PAGE_OF", "Volume", "one"),
+    ("enforce_recording_recording_of", "Recording", "RECORDING_OF", "Edition", "one"),
+    ("enforce_recording_has_license", "Recording", "HAS_LICENSE", "LicenseType", "one"),
+    ("enforce_recording_has_contribution", "Recording", "HAS_CONTRIBUTION", "Contribution", "many"),
+    ("enforce_contribution_with_role", "Contribution", "WITH_ROLE", "RoleType", "one"),
+    ("enforce_person_has_name", "Person", "HAS_NAME", "Nomen", "one"),
+    ("enforce_nomen_has_localization", "Nomen", "HAS_LOCALIZATION", "LocalizedText", "many"),
+    ("enforce_localizedtext_has_language", "LocalizedText", "HAS_LANGUAGE", "Language", "one"),
+]:
+    TRIGGERS.extend(
+        _required_rel_trigger(
+            name, f"{source} requires {relationship}->{target}", source, relationship, target, cardinality
+        )
     )
-)
 
-# =========================================================================
-# Tag
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_tag_belongs_to",
-        "Every Tag must have BELONGS_TO->Application",
-        "Tag",
-        "BELONGS_TO",
-        "Application",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_tag_has_title",
-        "Every Tag must have HAS_TITLE->Nomen",
-        "Tag",
-        "HAS_TITLE",
-        "Nomen",
-    )
-)
-
-# =========================================================================
-# Category
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_category_belongs_to",
-        "Every Category must have BELONGS_TO->Application",
-        "Category",
-        "BELONGS_TO",
-        "Application",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_category_has_title",
-        "Every Category must have HAS_TITLE->Nomen",
-        "Category",
-        "HAS_TITLE",
-        "Nomen",
-    )
-)
-
-# =========================================================================
-# Text
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_text_has_text_of",
-        "Every Text must have TEXT_OF->Work",
-        "Text",
-        "TEXT_OF",
-        "Work",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_text_has_language",
-        "Every Text must have HAS_LANGUAGE->Language",
-        "Text",
-        "HAS_LANGUAGE",
-        "Language",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_text_has_title",
-        "Every Text must have HAS_TITLE->Nomen",
-        "Text",
-        "HAS_TITLE",
-        "Nomen",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_text_has_license",
-        "Every Text must have HAS_LICENSE->LicenseType",
-        "Text",
-        "HAS_LICENSE",
-        "LicenseType",
-    )
-)
 
 # Text — target type enforcement for optional typed rels
 TRIGGERS.append(
@@ -264,27 +207,6 @@ TRIGGERS.append(
     )
 )
 
-# =========================================================================
-# Edition
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_edition_has_type",
-        "Every Edition must have HAS_TYPE->EditionType",
-        "Edition",
-        "HAS_TYPE",
-        "EditionType",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_edition_edition_of",
-        "Every Edition must have EDITION_OF->Text",
-        "Edition",
-        "EDITION_OF",
-        "Text",
-    )
-)
 TRIGGERS.append(
     _rel_target_type_trigger(
         "enforce_edition_has_segmentation_target",
@@ -313,7 +235,7 @@ TRIGGERS.append(
         WITH DISTINCT node
         WITH node, count { (node)-[:HAS_SEGMENTATION]->(:Segmentation) } AS cnt
         WHERE cnt > 1
-        WITH collect(node.id) AS ids
+        WITH collect(coalesce(node.id, elementId(node))) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -326,7 +248,7 @@ TRIGGERS.append(
         MATCH (e:Edition)
         WITH e, count { (e)-[:HAS_SEGMENTATION]->(:Segmentation) } AS cnt
         WHERE cnt > 1
-        RETURN e.id AS violating_id
+        RETURN coalesce(e.id, elementId(e)) AS violating_id
         """,
     }
 )
@@ -354,7 +276,7 @@ TRIGGERS.append(
           AND (node)-[:HAS_TYPE]->(:EditionType {name: 'diplomatic'})
         WITH node, count { (node)<-[:PAGINATION_OF]-(:Pagination) } AS cnt
         WHERE cnt <> 1
-        WITH collect(node.id) AS ids
+        WITH collect(coalesce(node.id, elementId(node))) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -367,23 +289,11 @@ TRIGGERS.append(
         MATCH (e:Edition)-[:HAS_TYPE]->(:EditionType {name: 'diplomatic'})
         WITH e, count { (e)<-[:PAGINATION_OF]-(:Pagination) } AS cnt
         WHERE cnt <> 1
-        RETURN e.id AS violating_id
+        RETURN coalesce(e.id, elementId(e)) AS violating_id
     """,
     }
 )
 
-# =========================================================================
-# Segment
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_segment_segment_of",
-        "Every Segment must have SEGMENT_OF->Segmentation",
-        "Segment",
-        "SEGMENT_OF",
-        "Segmentation",
-    )
-)
 TRIGGERS.append(
     {
         "name": "enforce_segment_reference_unique_per_segmentation",
@@ -424,9 +334,6 @@ TRIGGERS.append(
     }
 )
 
-# =========================================================================
-# Span — multi-target: must point to one of several labels
-# =========================================================================
 TRIGGERS.append(
     {
         "name": "enforce_span_span_of",
@@ -466,7 +373,7 @@ TRIGGERS.append(
         WHERE NOT (s)-[:SPAN_OF]->(
             :Segment|BibliographicMetadata|Note|Mark|Attribute|Page|TableOfContentsSection|Cue
         )
-        RETURN toString(s.start) + '-' + toString(s.end) AS violating_id
+        RETURN elementId(s) AS violating_id
     """,
     }
 )
@@ -503,169 +410,12 @@ TRIGGERS.append(
         MATCH (s:Span)
         WITH s, count { (s)-[:SPAN_OF]->() } AS cnt
         WHERE cnt > 1
-        RETURN toString(s.start) + '-' + toString(s.end) AS violating_id
+        RETURN elementId(s) AS violating_id
     """,
     }
 )
 
-# =========================================================================
-# BibliographicMetadata
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_bibmeta_bibliography_of",
-        "Every BibliographicMetadata must have BIBLIOGRAPHY_OF->Edition",
-        "BibliographicMetadata",
-        "BIBLIOGRAPHY_OF",
-        "Edition",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_bibmeta_has_type",
-        "Every BibliographicMetadata must have HAS_TYPE->BibliographyType",
-        "BibliographicMetadata",
-        "HAS_TYPE",
-        "BibliographyType",
-    )
-)
 
-# =========================================================================
-# Note
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_note_note_of",
-        "Every Note must have NOTE_OF->Edition",
-        "Note",
-        "NOTE_OF",
-        "Edition",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_note_has_type",
-        "Every Note must have HAS_TYPE->NoteType",
-        "Note",
-        "HAS_TYPE",
-        "NoteType",
-    )
-)
-
-# =========================================================================
-# Mark
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_mark_mark_of",
-        "Every Mark must have MARK_OF->Edition",
-        "Mark",
-        "MARK_OF",
-        "Edition",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_mark_has_type",
-        "Every Mark must have HAS_TYPE->MarkType",
-        "Mark",
-        "HAS_TYPE",
-        "MarkType",
-    )
-)
-
-# =========================================================================
-# Attribute
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_attribute_attribute_of",
-        "Every Attribute must have ATTRIBUTE_OF->Edition",
-        "Attribute",
-        "ATTRIBUTE_OF",
-        "Edition",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_attribute_has_type",
-        "Every Attribute must have HAS_TYPE->AttributeType",
-        "Attribute",
-        "HAS_TYPE",
-        "AttributeType",
-    )
-)
-
-# =========================================================================
-# Pagination
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_pagination_pagination_of",
-        "Every Pagination must have PAGINATION_OF->Edition",
-        "Pagination",
-        "PAGINATION_OF",
-        "Edition",
-    )
-)
-
-# =========================================================================
-# Volume
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_volume_volume_of",
-        "Every Volume must have VOLUME_OF->Pagination",
-        "Volume",
-        "VOLUME_OF",
-        "Pagination",
-    )
-)
-
-# =========================================================================
-# Page
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_page_page_of",
-        "Every Page must have PAGE_OF->Volume",
-        "Page",
-        "PAGE_OF",
-        "Volume",
-    )
-)
-
-# =========================================================================
-# Recording
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_recording_recording_of",
-        "Every Recording must have RECORDING_OF->Edition",
-        "Recording",
-        "RECORDING_OF",
-        "Edition",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_recording_has_license",
-        "Every Recording must have HAS_LICENSE->LicenseType",
-        "Recording",
-        "HAS_LICENSE",
-        "LicenseType",
-    )
-)
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_recording_has_contribution",
-        "Every Recording must have at least one HAS_CONTRIBUTION->Contribution",
-        "Recording",
-        "HAS_CONTRIBUTION",
-        "Contribution",
-        cardinality="many",
-    )
-)
 TRIGGERS.append(
     {
         "name": "enforce_recording_contribution_narrator",
@@ -677,6 +427,16 @@ TRIGGERS.append(
             WITH n WHERE n:Recording
             RETURN n AS node
           UNION ALL
+            UNWIND $createdNodes AS n
+            WITH n WHERE n:Contribution
+            MATCH (node:Recording)-[:HAS_CONTRIBUTION]->(n)
+            RETURN node
+          UNION ALL
+            UNWIND $createdNodes AS n
+            WITH n WHERE n:RoleType
+            MATCH (node:Recording)-[:HAS_CONTRIBUTION]->(:Contribution)-[:WITH_ROLE]->(n)
+            RETURN node
+          UNION ALL
             UNWIND $createdRelationships AS rel
             WITH rel WHERE type(rel) = 'HAS_CONTRIBUTION'
             WITH startNode(rel) AS n
@@ -687,9 +447,9 @@ TRIGGERS.append(
         WHERE NOT (node IN $deletedNodes)
           AND EXISTS {
             (node)-[:HAS_CONTRIBUTION]->(c:Contribution)-[:WITH_ROLE]->(rt:RoleType)
-            WHERE rt.name <> 'narrator'
+            WHERE rt.name IS NULL OR rt.name <> 'narrator'
           }
-        WITH collect(node.id) AS ids
+        WITH collect(coalesce(node.id, elementId(node))) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -700,15 +460,12 @@ TRIGGERS.append(
     """,
         "audit": """
         MATCH (r:Recording)-[:HAS_CONTRIBUTION]->(:Contribution)-[:WITH_ROLE]->(rt:RoleType)
-        WHERE rt.name <> 'narrator'
-        RETURN r.id AS violating_id
+        WHERE rt.name IS NULL OR rt.name <> 'narrator'
+        RETURN coalesce(r.id, elementId(r)) AS violating_id
     """,
     }
 )
 
-# =========================================================================
-# Cue
-# =========================================================================
 TRIGGERS.extend(
     _required_rel_trigger(
         "enforce_cue_cue_of",
@@ -746,9 +503,6 @@ TRIGGERS.append(
     }
 )
 
-# =========================================================================
-# Contribution — multi-target BY, plus required WITH_ROLE
-# =========================================================================
 TRIGGERS.append(
     {
         "name": "enforce_contribution_by",
@@ -822,59 +576,7 @@ TRIGGERS.append(
     """,
     }
 )
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_contribution_with_role",
-        "Every Contribution must have WITH_ROLE->RoleType",
-        "Contribution",
-        "WITH_ROLE",
-        "RoleType",
-    )
-)
 
-# =========================================================================
-# Person
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_person_has_name",
-        "Every Person must have HAS_NAME->Nomen",
-        "Person",
-        "HAS_NAME",
-        "Nomen",
-    )
-)
-
-# =========================================================================
-# Nomen — cardinality: many, so only existence check (no max-one)
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_nomen_has_localization",
-        "Every Nomen must have at least one HAS_LOCALIZATION->LocalizedText",
-        "Nomen",
-        "HAS_LOCALIZATION",
-        "LocalizedText",
-        cardinality="many",
-    )
-)
-
-# =========================================================================
-# LocalizedText
-# =========================================================================
-TRIGGERS.extend(
-    _required_rel_trigger(
-        "enforce_localizedtext_has_language",
-        "Every LocalizedText must have HAS_LANGUAGE->Language",
-        "LocalizedText",
-        "HAS_LANGUAGE",
-        "Language",
-    )
-)
-
-# =========================================================================
-# Semantic constraints — cross-cutting rules beyond simple existence/cardinality
-# =========================================================================
 
 # --- Text: TRANSLATION_OF and COMMENTARY_OF are mutually exclusive ----------
 TRIGGERS.append(
@@ -888,7 +590,7 @@ TRIGGERS.append(
         WHERE node:Text
         WITH node
         WHERE (node)-[:TRANSLATION_OF]->() AND (node)-[:COMMENTARY_OF]->()
-        WITH collect(node.id) AS ids
+        WITH collect(coalesce(node.id, elementId(node))) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -900,7 +602,7 @@ TRIGGERS.append(
         "audit": """
         MATCH (t:Text)
         WHERE (t)-[:TRANSLATION_OF]->() AND (t)-[:COMMENTARY_OF]->()
-        RETURN t.id AS violating_id
+        RETURN coalesce(t.id, elementId(t)) AS violating_id
     """,
     }
 )
@@ -925,7 +627,7 @@ def _no_self_ref_trigger(
             WHERE type(rel) = '{rel_type}'
             WITH rel, startNode(rel) AS source, endNode(rel) AS target
             WHERE source = target
-            WITH collect(source.id) AS ids
+            WITH collect(coalesce(source.id, elementId(source))) AS ids
             WHERE size(ids) > 0
             CALL apoc.util.validate(
                 true,
@@ -936,7 +638,7 @@ def _no_self_ref_trigger(
         """,
         "audit": f"""
             MATCH (n)-[:{rel_type}]->(n)
-            RETURN n.id AS violating_id
+            RETURN coalesce(n.id, elementId(n)) AS violating_id
         """,
     }
 
@@ -964,9 +666,9 @@ TRIGGERS.append(
 )
 TRIGGERS.append(
     _no_self_ref_trigger(
-        "enforce_no_self_child_of",
-        "CHILD_OF must not point to self",
-        "CHILD_OF",
+        "enforce_no_self_has_parent",
+        "HAS_PARENT must not point to self",
+        "HAS_PARENT",
     )
 )
 TRIGGERS.append(
@@ -988,8 +690,8 @@ TRIGGERS.append(
         WITH node
         WHERE node:Span
         WITH node
-        WHERE node.start > node.end
-        WITH collect(toString(node.start) + '-' + toString(node.end)) AS ids
+        WHERE node.start IS NULL OR node.end IS NULL OR node.start < 0 OR node.start > node.end
+        WITH collect(elementId(node)) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -1000,8 +702,8 @@ TRIGGERS.append(
     """,
         "audit": """
         MATCH (s:Span)
-        WHERE s.start > s.end
-        RETURN toString(s.start) + '-' + toString(s.end) AS violating_id
+        WHERE s.start IS NULL OR s.end IS NULL OR s.start < 0 OR s.start > s.end
+        RETURN elementId(s) AS violating_id
     """,
     }
 )
@@ -1020,7 +722,7 @@ TRIGGERS.append(
         WHERE type(rel) = 'ALTERNATIVE_OF'
         WITH startNode(rel) AS child, endNode(rel) AS parent
         WHERE (child)<-[:ALTERNATIVE_OF]-() OR (parent)-[:ALTERNATIVE_OF]->()
-        WITH collect(child.id) AS ids
+        WITH collect(coalesce(child.id, elementId(child))) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -1031,15 +733,11 @@ TRIGGERS.append(
     """,
         "audit": """
         MATCH (a:Nomen)-[:ALTERNATIVE_OF]->(b:Nomen)-[:ALTERNATIVE_OF]->(c:Nomen)
-        RETURN b.id AS violating_id
+        RETURN coalesce(b.id, elementId(b)) AS violating_id
     """,
     }
 )
 
-
-# =========================================================================
-# Validations extracted from DatabaseValidator
-# =========================================================================
 
 # --- Work: at most one original Text --------------------------------------
 # A Work can only have one Text with TEXT_OF {original: true}
@@ -1056,7 +754,7 @@ TRIGGERS.append(
         WHERE work:Work
         WITH work, count { (work)<-[:TEXT_OF {original: true}]-(:Text) } AS cnt
         WHERE cnt > 1
-        WITH collect(work.id) AS ids
+        WITH collect(coalesce(work.id, elementId(work))) AS ids
         WHERE size(ids) > 0
         CALL apoc.util.validate(
             true,
@@ -1069,7 +767,7 @@ TRIGGERS.append(
         MATCH (w:Work)<-[:TEXT_OF {original: true}]-(:Text)
         WITH w, count(*) AS cnt
         WHERE cnt > 1
-        RETURN w.id AS violating_id
+        RETURN coalesce(w.id, elementId(w)) AS violating_id
         """,
     }
 )
@@ -1081,9 +779,16 @@ TRIGGERS.append(
         "description": "Text title + language combination must be unique",
         "phase": "before",
         "query": """
-        UNWIND $createdNodes AS node
-        WITH node
-        WHERE node:LocalizedText
+        UNWIND $createdNodes AS candidate
+        WITH DISTINCT candidate WHERE NOT candidate IN $deletedNodes
+        MATCH (candidate)-[:HAS_TITLE|HAS_LOCALIZATION*0..2]->(node:LocalizedText)
+        WHERE EXISTS { (:Text)-[:HAS_TITLE]->(:Nomen)-[:HAS_LOCALIZATION]->(node) }
+        MATCH (node)-[:HAS_LANGUAGE]->(language:Language)
+        WITH DISTINCT node, language ORDER BY language.code
+        WITH collect(DISTINCT node) AS titles, collect(DISTINCT language) AS languages
+        // Serialize title checks on existing language nodes before reading competing titles.
+        CALL apoc.lock.nodes(languages)
+        UNWIND titles AS node
         MATCH (node)-[rel:HAS_LANGUAGE]->(lang:Language)
         WITH node, toLower(coalesce(rel.bcp47, lang.code)) AS title_lang
         MATCH (node)<-[:HAS_LOCALIZATION]-(:Nomen)<-[:HAS_TITLE]-(text_node:Text)
@@ -1112,16 +817,100 @@ TRIGGERS.append(
 )
 
 
-async def install_triggers(driver: AsyncDriver) -> None:
+for name, source, relationship, target in [
+    ("enforce_toc_edition", "TableOfContents", "TOC_OF", "Edition"),
+    ("enforce_toc_section", "TableOfContentsSection", "SECTION_OF", "TableOfContents"),
+    ("enforce_toc_section_title", "TableOfContentsSection", "HAS_TITLE", "Nomen"),
+]:
+    TRIGGERS.extend(_required_rel_trigger(name, f"{source} requires {relationship}", source, relationship, target))
+
+TRIGGERS.append(
+    _no_self_ref_trigger("enforce_no_self_subsection_of", "Sections cannot parent themselves", "SUBSECTION_OF")
+)
+TRIGGERS.append(
+    _rel_target_type_trigger("enforce_has_parent_target", "HAS_PARENT targets Category", "HAS_PARENT", "Category")
+)
+TRIGGERS.append(
+    _rel_target_type_trigger(
+        "enforce_subsection_target", "SUBSECTION_OF targets a section", "SUBSECTION_OF", "TableOfContentsSection"
+    )
+)
+
+_TOC_INVALID = """
+    count { (s)-[:SUBSECTION_OF]->() } > 1
+    OR EXISTS { (s)-[:SUBSECTION_OF*1..]->(s) }
+    OR EXISTS {
+        (s)-[:SUBSECTION_OF]->(p:TableOfContentsSection)
+        WHERE NOT EXISTS { (s)-[:SECTION_OF]->(:TableOfContents)<-[:SECTION_OF]-(p) }
+    }
+    OR EXISTS {
+        (child:Span)-[:SPAN_OF]->(s)-[:SUBSECTION_OF]->(:TableOfContentsSection)<-[:SPAN_OF]-(parent:Span)
+        WHERE child.start < parent.start OR child.end > parent.end
+    }
+"""
+TRIGGERS.append(
+    {
+        "name": "enforce_toc_hierarchy",
+        "description": "TOC parents form a contained tree within one TOC",
+        "phase": "before",
+        "query": f"""
+        UNWIND $createdNodes AS n
+        CALL (n) {{
+            WITH n WHERE n:TableOfContentsSection RETURN n AS section
+            UNION MATCH (n:Span)-[:SPAN_OF]->(section:TableOfContentsSection) RETURN section
+        }}
+        WITH section WHERE NOT section IN $deletedNodes
+        UNWIND [section] + [(child:TableOfContentsSection)-[:SUBSECTION_OF]->(section) | child] AS s
+        WITH DISTINCT s WHERE {_TOC_INVALID}
+        WITH collect(coalesce(s.id, elementId(s))) AS ids WHERE size(ids) > 0
+        CALL apoc.util.validate(
+            true, 'enforce_toc_hierarchy: Invalid section hierarchy. IDs: %s', [string.join(ids, ', ')]
+        )
+        RETURN null
+    """,
+        "audit": f"""MATCH (s:TableOfContentsSection) WHERE {_TOC_INVALID}
+            RETURN coalesce(s.id, elementId(s)) AS violating_id""",
+    }
+)
+
+# APOC supplies changed properties and labels separately from created nodes.
+# Expand that event set once when building the statements, so updates use the same rules.
+_CHANGED_RELATIONSHIPS = """($createdRelationships
+    + reduce(rels = [], key IN keys($assignedRelationshipProperties) |
+        rels + [entry IN $assignedRelationshipProperties[key] | entry.relationship])
+    + reduce(rels = [], key IN keys($removedRelationshipProperties) |
+        rels + [entry IN $removedRelationshipProperties[key] | entry.relationship]))"""
+_CHANGED_NODES = """($createdNodes
+    + reduce(nodes = [], key IN keys($assignedNodeProperties) |
+        nodes + [entry IN $assignedNodeProperties[key] | entry.node])
+    + reduce(nodes = [], key IN keys($removedNodeProperties) |
+        nodes + [entry IN $removedNodeProperties[key] | entry.node])
+    + reduce(nodes = [], label IN keys($assignedLabels) | nodes + $assignedLabels[label])
+    + reduce(nodes = [], label IN keys($removedLabels) | nodes + $removedLabels[label]
+        + reduce(neighbors = [], node IN [n IN $removedLabels[label] WHERE NOT n IN $deletedNodes] |
+            neighbors + [(node)--(neighbor) | neighbor]))
+    + reduce(nodes = [], rel IN $createdRelationships + $deletedRelationships |
+        nodes + [startNode(rel), endNode(rel)]))"""
+_CHANGED_NODES = f"[node IN {_CHANGED_NODES} WHERE NOT node IN $deletedNodes]"
+_CHANGED_RELATIONSHIPS = f"[rel IN {_CHANGED_RELATIONSHIPS} WHERE NOT rel IN $deletedRelationships]"
+for trigger in TRIGGERS:
+    trigger["query"] = (
+        trigger["query"]
+        .replace("$createdNodes", _CHANGED_NODES)
+        .replace("$createdRelationships", _CHANGED_RELATIONSHIPS)
+    )
+
+
+async def install_triggers(driver: AsyncDriver, database: str = DATABASE_NAME) -> None:
     """Replace all installed triggers with TRIGGERS in one transaction. Idempotent — safe to call on every deploy."""
 
     async def write(tx: AsyncManagedTransaction) -> None:
-        await tx.run("CALL apoc.trigger.dropAll($database)", database=DATABASE_NAME)
+        await tx.run("CALL apoc.trigger.dropAll($database)", database=database)
 
         for trigger in TRIGGERS:
             await tx.run(
                 "CALL apoc.trigger.install($database, $name, $statement, {phase: $phase})",
-                database=DATABASE_NAME,
+                database=database,
                 name=trigger["name"],
                 statement=f"CYPHER 25 {trigger['query']}",
                 phase=trigger["phase"],
@@ -1134,7 +923,7 @@ async def install_triggers(driver: AsyncDriver) -> None:
     logger.info("All %d triggers installed.", len(TRIGGERS))
 
 
-async def audit_triggers(driver: AsyncDriver) -> dict[str, list[str]]:
+async def audit_triggers(driver: AsyncDriver, database: str = DATABASE_NAME) -> dict[str, list[str]]:
     """Run all audit queries against the full database. Returns a dict of trigger name -> list of violating IDs.
 
     An empty dict means no violations found.
@@ -1148,7 +937,7 @@ async def audit_triggers(driver: AsyncDriver) -> dict[str, list[str]]:
 
             result = await tx.run(trigger["audit"])
             records = await result.data()
-            violating_ids = [r["violating_id"] for r in records if r["violating_id"]]
+            violating_ids = [str(r["violating_id"]) for r in records]
             if violating_ids:
                 found[trigger["name"]] = violating_ids
                 preview = ", ".join(violating_ids[:5])
@@ -1162,7 +951,7 @@ async def audit_triggers(driver: AsyncDriver) -> dict[str, list[str]]:
                 )
         return found
 
-    async with driver.session(database=DATABASE_NAME) as session:
+    async with driver.session(database=database) as session:
         violations = await session.execute_read(read)
 
     if not violations:

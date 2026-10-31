@@ -30,14 +30,14 @@ Applications provide:
 Development: https://api-l25bgmwqoa-uc.a.run.app
 Production: https://api-aq25662yyq-uc.a.run.app
 Test: https://api-kwgjscy6gq-uc.a.run.app
-Local: http://127.0.0.1:5001/pecha-backend-test-3a4d0/us-central1/api
+Local: http://127.0.0.1:8000
 ```
 
 ---
 
 ## Authentication
 
-All API requests require authentication using an API key.
+Creating or deleting an application requires an unbound API key. Application-bound keys receive `403 Forbidden`, including when their `X-Application` header matches the target application. Authentication is bypassed only in the configured development/test mode.
 
 **Header:**
 ```
@@ -94,7 +94,8 @@ POST /v2/applications
 
 **Error Responses:**
 - `401 Unauthorized`: Missing or invalid API key in deployed environments
-- `422 Validation Error`: Missing `name`, empty `name`, duplicate application, extra fields, or validation failure
+- `409 Conflict`: An application with the normalized name already exists
+- `422 Validation Error`: Missing `name`, empty `name`, extra fields, or validation failure
 - `500 Server Error`: Internal server error
 
 **Example Usage:**

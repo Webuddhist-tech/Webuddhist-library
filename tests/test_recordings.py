@@ -123,6 +123,9 @@ class TestRecordingsEndpoints(RecordingHelpers):
         assert recording["duration_ms"] == 754000
         assert recording["format"] == "mp3"
         assert recording["size_bytes"] == len(AUDIO_BYTES)
+        assert await test_database.recording.get_storage_location(recording_id) == (
+            f"recordings/{edition_id}/{recording_id}.mp3"
+        )
         assert len(recording["contributions"]) == 1
         contribution = recording["contributions"][0]
         assert contribution["type"] == "person"
@@ -294,7 +297,7 @@ class TestRecordingsEndpoints(RecordingHelpers):
 
         assert response.status_code == 307
         assert response.headers["location"] == (
-            f"https://mock-s3.example.com/recordings/{edition_id}/{recording_id}.mp3?signed=1&expires_in=3600"
+            f"https://mock-s3.example.com/{await test_database.recording.get_storage_location(recording_id)}?signed=1&expires_in=3600"
         )
 
     async def test_get_audio_for_missing_recording(self, client):
@@ -377,14 +380,14 @@ class TestRecordingsEndpoints(RecordingHelpers):
             {"contributions": [{"type": "person", "id": person_id, "role": "narrator"}]},
         )
         recording_id = create.json()["id"]
-        storage_key = f"recordings/{edition_id}/{recording_id}.mp3"
+        storage_key = await test_database.recording.get_storage_location(recording_id)
         assert storage_key in mock_storage._storage
 
         response = await client.delete(f"/v2/recordings/{recording_id}")
 
         assert response.status_code == 204
         assert (await client.get(f"/v2/recordings/{recording_id}")).status_code == 404
-        assert storage_key not in mock_storage._storage
+        assert mock_storage._storage[storage_key]  # Database deletion retains the audio object.
 
     async def test_delete_missing_recording(self, client):
         response = await client.delete(f"/v2/recordings/{generate_id()}")
@@ -399,7 +402,10 @@ class TestRecordingsEndpoints(RecordingHelpers):
             {"contributions": [{"type": "person", "id": person_id, "role": "narrator"}]},
         )
 
-        assert (await client.delete(f"/v2/recordings/{create.json()['id']}")).status_code == 204
+        assert create.status_code == 201, create.text
+        recording_id = create.json()["id"]
+        assert (await client.delete(f"/v2/recordings/{recording_id}")).status_code == 204
+        assert (await client.get(f"/v2/recordings/{recording_id}")).status_code == 404
         assert (await client.get(f"/v2/editions/{edition_id}")).status_code == 200
         assert (await client.get(f"/v2/persons/{person_id}")).status_code == 200
 

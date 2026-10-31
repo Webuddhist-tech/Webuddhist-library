@@ -1,20 +1,7 @@
 # pylint: disable=redefined-outer-name,too-many-lines
-"""
-Integration tests using real cloud Neo4j instance.
-
-Requires environment variables:
-- NEO4J_TEST_URI: Neo4j test instance URI
-- NEO4J_TEST_PASSWORD: Password for test instance
-
-Environment variables can be set via:
-1. Shell environment (export NEO4J_TEST_URI=...)
-2. .env file in project root (automatically loaded)
-"""
-
-import os
+"""Repository integration and span tests using the disposable Neo4j fixture."""
 
 import pytest
-import pytest_asyncio
 from exceptions import DataNotFoundError, DataValidationError
 from identifier import generate_id
 from models.annotation import Page, PaginationInput, Span, Volume
@@ -143,15 +130,6 @@ class TestDatabase:
         assert len(editions) == 0
 
 
-    async def test_database_connection_parameters(self, test_database):
-        """Test that database is using the test connection parameters"""
-        # This is more of a sanity check to ensure we're connected to the test database
-        # We can't easily check the exact connection details, but we can verify
-        # that the database responds to queries
-        async with test_database.get_session() as session:
-            result = await session.run("RETURN 'test connection' as message")
-            record = await result.single()
-            assert record["message"] == "test connection"
 
 
     async def test_create_root_text_success(self, test_database):
@@ -413,7 +391,7 @@ class TestDatabase:
 
         # Now create a translation text using translation_of
         translation_text = TextInput(
-            category_id="category",
+
             title=LocalizedString({"bo": "བསྒྱུར་བ།"}),
             language="bo",
             translation_of=root_text_id,
@@ -452,7 +430,7 @@ class TestDatabase:
         # Try to create text with both commentary_of and translation_of - should fail validation
         with pytest.raises(ValueError, match="Cannot be both a commentary and translation"):
             TextInput(
-                category_id="category",
+
                 title=LocalizedString({"bo": "བསྒྱུར་བ།"}),
                 language="bo",
                 commentary_of=root_id,
@@ -471,7 +449,7 @@ class TestDatabase:
 
         # Create translation with non-existent target
         translation_text = TextInput(
-            category_id="category",
+
             title=LocalizedString({"bo": "བསྒྱུར་བ།"}),
             language="bo",
             translation_of="nonexistent-target-id",
@@ -479,7 +457,7 @@ class TestDatabase:
         )
 
         # Should fail when trying to create in database
-        with pytest.raises(Exception):
+        with pytest.raises(DataNotFoundError, match="nonexistent-target-id"):
             await test_database.text.create(translation_text)
 
 
@@ -549,7 +527,7 @@ class TestDatabase:
         )
 
         # Should fail when trying to create in database
-        with pytest.raises(Exception):
+        with pytest.raises(DataNotFoundError, match="nonexistent-target-id"):
             await test_database.text.create(commentary_text)
 
 
@@ -640,20 +618,16 @@ class TestDatabase:
             contributions=[PersonContributionInput(type="person", id=person_id, role=ContributorRole.AUTHOR)],
         )
         root_id = await test_database.text.create(root_text)
-        root_editions = await test_database.edition.get_all(root_id)
-        assert isinstance(root_editions, list)
 
         # Test TRANSLATION text
         translation_text = TextInput(
-            category_id="category",
+
             title=LocalizedString({"bo": "འགྱུར་བ།"}),
             language="bo",
             translation_of=root_id,
             contributions=[PersonContributionInput(type="person", id=person_id, role=ContributorRole.TRANSLATOR)],
         )
         translation_id = await test_database.text.create(translation_text)
-        translation_editions = await test_database.edition.get_all(translation_id)
-        assert isinstance(translation_editions, list)
 
         # Test COMMENTARY text
         commentary_text = TextInput(
@@ -664,8 +638,17 @@ class TestDatabase:
             contributions=[PersonContributionInput(type="person", id=person_id, role=ContributorRole.AUTHOR)],
         )
         commentary_id = await test_database.text.create(commentary_text)
-        commentary_editions = await test_database.edition.get_all(commentary_id)
-        assert isinstance(commentary_editions, list)
+
+        from models.edition import EditionInput
+        from identifier import generate_id
+        expected = {}
+        for text_id in (root_id, translation_id, commentary_id):
+            edition_id = generate_id()
+            await test_database.edition.create(EditionInput(type="critical"), edition_id, text_id, 10)
+            expected[text_id] = edition_id
+        for text_id, edition_id in expected.items():
+            editions = await test_database.edition.get_all(text_id)
+            assert [edition.id for edition in editions] == [edition_id]
 
 
     async def test_create_edition_basic(self, test_database):
@@ -930,7 +913,7 @@ class TestDatabase:
 
         # Create translation text input
         translation_text = TextInput(
-            category_id="category",
+
             title=LocalizedString({"bo": "བསྒྱུར་བ།"}),
             language="bo",
             translation_of=root_text_id,
@@ -1168,117 +1151,26 @@ class TestSpanAdjustmentFunctions:
         result = _adjust_span_for_delete(start=10, end=30, del_start=15, del_end=20)
         assert result == (10, 25)
 
-    async def test_continuous_replace_exact_match_preserves(self):
-        """Replace exact match should preserve continuous span."""
-        from database.span_database import _adjust_continuous_for_replace
+    @pytest.mark.parametrize("is_page", [False, True])
+    @pytest.mark.parametrize(
+        ("lines", "start", "end", "new_len", "expected"),
+        [
+            ([("text", 10, 20)], 10, 20, 15, {"text": (10, 25)}),
+            ([("text", 4, 9)], 4, 9, 5, {"text": (4, 9)}),
+            ([("text", 4, 9)], 4, 9, 2, {"text": (4, 6)}),
+            ([("text", 10, 20)], 5, 25, 10, {"text": (5, 15)}),
+            ([("text", 0, 10)], 0, 7, 2, {"text": (0, 5)}),
+            ([("first", 0, 5), ("last", 5, 10)], 1, 10, 2, {"first": (0, 3)}),
+            ([("first", 0, 5), ("marker", 5, 5), ("last", 5, 10)], 6, 7, 1,
+             {"first": (0, 5), "marker": (5, 5), "last": (5, 10)}),
+            ([("marker", 1, 1), ("text", 1, 3)], 0, 4, 2, {"marker": (0, 0), "text": (0, 2)}),
+            ([("first", 4, 6), ("last", 6, 8)], 2, 10, 3, {"first": (2, 5)}),
+        ],
+    )
+    async def test_continuous_replacement_preserves_lines_and_markers(self, is_page, lines, start, end, new_len, expected):
+        from database.span_database import _adjust_continuous_entities
 
-        result = _adjust_continuous_for_replace(
-            start=10, end=20, replace_start=10, replace_end=20, new_len=15, is_first_encompassed=False
-        )
-        assert result == (10, 25)
-
-    async def test_continuous_replace_encompasses_first_keeps(self):
-        """Replace encompassing first continuous span should keep it."""
-        from database.span_database import _adjust_continuous_for_replace
-
-        result = _adjust_continuous_for_replace(
-            start=10, end=20, replace_start=5, replace_end=25, new_len=10, is_first_encompassed=True
-        )
-        assert result == (5, 15)
-
-    async def test_continuous_replace_encompasses_subsequent_deletes(self):
-        """Replace encompassing subsequent continuous spans should delete them."""
-        from database.span_database import _adjust_continuous_for_replace
-
-        result = _adjust_continuous_for_replace(
-            start=10, end=20, replace_start=5, replace_end=25, new_len=10, is_first_encompassed=False
-        )
-        assert result is None
-
-    async def test_continuous_replace_starting_at_span_start_keeps_replacement(self):
-        """A continuous entity starting at the replacement boundary must include the new text."""
-        from database.span_database import _adjust_continuous_for_replace
-
-        result = _adjust_continuous_for_replace(
-            start=0,
-            end=10,
-            replace_start=0,
-            replace_end=7,
-            new_len=2,
-            is_first_encompassed=False,
-        )
-
-        assert result == (0, 5)
-
-    async def test_continuous_multiline_replace_maps_shared_boundaries_once(self):
-        """Internal lines swallowed by a replacement collapse without overlap."""
-        from database.span_database import _adjust_continuous_lines_for_replace
-
-        result = _adjust_continuous_lines_for_replace(
-            [("first", 0, 5), ("second", 5, 10)],
-            replace_start=1,
-            replace_end=10,
-            new_len=2,
-            is_first_encompassed=False,
-        )
-
-        assert result == [("first", 0, 3)]
-
-    async def test_continuous_multiline_replace_preserves_zero_length_marker(self):
-        """An intentional empty line remains a mapped position marker."""
-        from database.span_database import _adjust_continuous_lines_for_replace
-
-        result = _adjust_continuous_lines_for_replace(
-            [("first", 0, 5), ("marker", 5, 5), ("last", 5, 10)],
-            replace_start=6,
-            replace_end=7,
-            new_len=1,
-            is_first_encompassed=False,
-        )
-
-        assert result == [("first", 0, 5), ("marker", 5, 5), ("last", 5, 10)]
-
-    async def test_continuous_multiline_replace_does_not_expand_leading_marker(self):
-        """A leading empty marker stays empty when its entity carries replacement text."""
-        from database.span_database import _adjust_continuous_lines_for_replace
-
-        result = _adjust_continuous_lines_for_replace(
-            [("marker", 1, 1), ("content", 1, 3)],
-            replace_start=0,
-            replace_end=4,
-            new_len=2,
-            is_first_encompassed=True,
-        )
-
-        assert result == [("content", 0, 2), ("marker", 2, 2)]
-
-    async def test_continuous_replace_maps_all_empty_entity_without_expanding_it(self):
-        """An entity made only of position markers remains empty."""
-        from database.span_database import _adjust_continuous_lines_for_replace
-
-        result = _adjust_continuous_lines_for_replace(
-            [("marker", 5, 5)],
-            replace_start=2,
-            replace_end=8,
-            new_len=1,
-            is_first_encompassed=False,
-        )
-
-        assert result == [("marker", 3, 3)]
-
-    async def test_continuous_multiline_replace_keeps_one_line_for_first_encompassed_entity(self):
-        """The first encompassed entity retains its ID through one surviving line."""
-        from database.span_database import _adjust_continuous_lines_for_replace
-
-        result = _adjust_continuous_lines_for_replace(
-            [("first", 4, 6), ("second", 6, 8)],
-            replace_start=2,
-            replace_end=10,
-            new_len=3,
-            is_first_encompassed=True,
-        )
-
-        assert result == [("first", 2, 5)]
+        assert _adjust_continuous_entities({("collection", "entity", is_page): lines}, start, end, new_len) == expected
 
     async def test_annotation_replace_exact_match_deletes(self):
         """Replace exact match should delete annotation."""
@@ -1336,21 +1228,6 @@ class TestSpanAdjustmentEdgeCases:
         assert s2_result == (15, 25)
         assert s1_result[1] == s2_result[0]
 
-    async def test_insert_at_segment_boundary_with_gap(self):
-        """Insert at boundary between segments with gap.
-
-        Setup: B1 [0, 3), space at 3, B2 [4, 9)
-        Operation: Insert "very " at position 4
-        Expected: B1 unchanged, B2 shifts
-        """
-        from database.span_database import _adjust_continuous_for_insert
-
-        b1_result = _adjust_continuous_for_insert(start=0, end=3, insert_pos=4, insert_len=5)
-        b2_result = _adjust_continuous_for_insert(start=4, end=9, insert_pos=4, insert_len=5)
-
-        assert b1_result == (0, 3)
-        assert b2_result == (9, 14)
-
     async def test_delete_exact_match_returns_none(self):
         """Delete that exactly matches span should return None.
 
@@ -1364,14 +1241,14 @@ class TestSpanAdjustmentEdgeCases:
     async def test_delete_across_multiple_spans(self):
         """Delete crossing multiple spans should trim both.
 
-        Setup: B2 [4, 9), B3 [10, 15)
+        Setup: B2 [4, 9), B3 [9, 15)
         Operation: Delete [7, 12) - crosses both spans
         Expected: B2 trims to [4, 7), B3 trims and shifts to [7, 10)
         """
         from database.span_database import _adjust_span_for_delete
 
         b2_result = _adjust_span_for_delete(start=4, end=9, del_start=7, del_end=12)
-        b3_result = _adjust_span_for_delete(start=10, end=15, del_start=7, del_end=12)
+        b3_result = _adjust_span_for_delete(start=9, end=15, del_start=7, del_end=12)
 
         assert b2_result == (4, 7)
         assert b3_result == (7, 10)
@@ -1415,114 +1292,20 @@ class TestSpanAdjustmentEdgeCases:
         assert s1_result[1] == s2_result[0]
         assert s2_result[1] == s3_result[0]
 
-    async def test_replace_same_length_exact_match_continuous(self):
-        """Replace with same length on exact match should preserve continuous span.
 
-        Operation: Replace [4, 9) with "QUICK" (5 chars) on span [4, 9)
-        """
-        from database.span_database import _adjust_continuous_for_replace
+    async def test_independent_collections_choose_their_own_replacement_owner(self):
+        from database.span_database import _adjust_continuous_entities
 
-        result = _adjust_continuous_for_replace(
-            start=4, end=9, replace_start=4, replace_end=9, new_len=5, is_first_encompassed=False
-        )
-        assert result == (4, 9)
-
-    async def test_replace_longer_text_exact_match_continuous(self):
-        """Replace with longer text on exact match should expand continuous span.
-
-        Operation: Replace [4, 9) with "VERY QUICK" (10 chars) on span [4, 9)
-        """
-        from database.span_database import _adjust_continuous_for_replace
-
-        result = _adjust_continuous_for_replace(
-            start=4, end=9, replace_start=4, replace_end=9, new_len=10, is_first_encompassed=False
-        )
-        assert result == (4, 14)
-
-    async def test_replace_shorter_text_exact_match_continuous(self):
-        """Replace with shorter text on exact match should shrink continuous span.
-
-        Operation: Replace [4, 9) with "QK" (2 chars) on span [4, 9)
-        """
-        from database.span_database import _adjust_continuous_for_replace
-
-        result = _adjust_continuous_for_replace(
-            start=4, end=9, replace_start=4, replace_end=9, new_len=2, is_first_encompassed=False
-        )
-        assert result == (4, 6)
-
-    async def test_replace_encompasses_multiple_continuous_keeps_first(self):
-        """Replace encompassing multiple continuous spans should keep first, delete others.
-
-        Setup: B2 [4, 9), B3 [10, 15)
-        Operation: Replace [4, 15) with "FAST" (4 chars)
-        Expected: B2 (first) becomes [4, 8), B3 deleted
-        """
-        from database.span_database import _adjust_continuous_for_replace
-
-        b2_result = _adjust_continuous_for_replace(
-            start=4, end=9, replace_start=4, replace_end=15, new_len=4, is_first_encompassed=True
-        )
-        b3_result = _adjust_continuous_for_replace(
-            start=10, end=15, replace_start=4, replace_end=15, new_len=4, is_first_encompassed=False
-        )
-
-        assert b2_result == (4, 8)
-        assert b3_result is None
-
-    async def test_replace_encompasses_annotation_deletes(self):
-        """Replace encompassing annotation (not exact) should delete it.
-
-        Operation: Replace [3, 10) on annotation [4, 9)
-        """
-        from database.span_database import _adjust_annotation_for_replace
-
-        result = _adjust_annotation_for_replace(start=4, end=9, replace_start=3, replace_end=10, new_len=7)
-        assert result is None
-
-    async def test_multiple_segmentations_affected_correctly(self):
-        """Multiple segmentations should be adjusted correctly.
-
-        Setup:
-        - Segmentation A: S_A1 [0, 20), S_A2 [20, 40)
-        - Segmentation B: S_B1 [0, 10), S_B2 [10, 20), S_B3 [20, 40)
-
-        Operation: Replace [5, 15) with "XXX" (3 chars), delta = -7
-
-        Expected:
-        - S_A1: inside replace -> [0, 13)
-        - S_A2: shift -> [13, 33)
-        - S_B1: trim end -> [0, 8)
-        - S_B2: trim start, shift -> [8, 13)
-        - S_B3: shift -> [13, 33)
-        """
-        from database.span_database import _adjust_continuous_for_replace
-
-        s_a1 = _adjust_continuous_for_replace(
-            start=0, end=20, replace_start=5, replace_end=15, new_len=3, is_first_encompassed=False
-        )
-        s_a2 = _adjust_continuous_for_replace(
-            start=20, end=40, replace_start=5, replace_end=15, new_len=3, is_first_encompassed=False
-        )
-        s_b1 = _adjust_continuous_for_replace(
-            start=0, end=10, replace_start=5, replace_end=15, new_len=3, is_first_encompassed=False
-        )
-        s_b2 = _adjust_continuous_for_replace(
-            start=10, end=20, replace_start=5, replace_end=15, new_len=3, is_first_encompassed=False
-        )
-        s_b3 = _adjust_continuous_for_replace(
-            start=20, end=40, replace_start=5, replace_end=15, new_len=3, is_first_encompassed=False
-        )
-
-        assert s_a1 == (0, 13)
-        assert s_a2 == (13, 33)
-        assert s_b1 == (0, 8)
-        assert s_b2 == (8, 13)
-        assert s_b3 == (13, 33)
-        assert s_a1 is not None and s_a2 is not None and s_b1 is not None and s_b2 is not None and s_b3 is not None
-        assert s_a1[1] == s_a2[0]
-        assert s_b1[1] == s_b2[0]
-        assert s_b2[1] == s_b3[0]
+        entities = {
+            ("segmentation", "a1", False): [("a1", 0, 20)],
+            ("segmentation", "a2", False): [("a2", 20, 40)],
+            ("pagination", "b1", True): [("b1", 0, 10)],
+            ("pagination", "b2", True): [("b2", 10, 20)],
+            ("pagination", "b3", True): [("b3", 20, 40)],
+        }
+        assert _adjust_continuous_entities(entities, 5, 15, 3) == {
+            "a1": (0, 13), "a2": (13, 33), "b1": (0, 8), "b2": (8, 13), "b3": (13, 33),
+        }
 
     async def test_overlapping_annotations_handled_correctly(self):
         """Overlapping annotations should be handled correctly.

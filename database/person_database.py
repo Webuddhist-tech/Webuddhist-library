@@ -4,8 +4,9 @@ from neo4j.exceptions import ConstraintError
 
 from exceptions import DataConflictError, DataNotFoundError
 from identifier import generate_id
-from models.person import PersonOutput
+from models.person import PersonBase, PersonOutput
 
+from .locking import lock_nodes
 from .nomen_database import NomenDatabase
 
 if TYPE_CHECKING:
@@ -67,7 +68,7 @@ class PersonDatabase:
 
     UPDATE_PROPERTIES_QUERY: LiteralString = """
     MATCH (p:Person {id: $id})
-    SET p.bdrc = $bdrc, p.wiki = $wiki
+    SET p += $properties
     RETURN p.id as person_id
     """
 
@@ -108,15 +109,16 @@ class PersonDatabase:
         return self._db.get_session()
 
     async def get(self, person_id: str) -> PersonOutput:
-        async def read(tx: AsyncManagedTransaction) -> PersonOutput:
-            result = await tx.run(PersonDatabase.GET_QUERY, id=person_id)
-            record = await result.single()
-            if not record:
-                raise DataNotFoundError(f"Person with ID '{person_id}' not found")
-            return PersonOutput.model_validate(record["person"])
-
         async with self.session as session:
-            return await session.execute_read(read)
+            return await session.execute_read(self.get_with_transaction, person_id)
+
+    @staticmethod
+    async def get_with_transaction(tx: AsyncManagedTransaction, person_id: str) -> PersonOutput:
+        result = await tx.run(PersonDatabase.GET_QUERY, id=person_id)
+        record = await result.single()
+        if record is None:
+            raise DataNotFoundError(f"Person with ID '{person_id}' not found")
+        return PersonOutput.model_validate(record["person"])
 
     async def get_by_ids(self, person_ids: list[str]) -> list[PersonOutput]:
         if not person_ids:
@@ -173,36 +175,30 @@ class PersonDatabase:
                 raise DataConflictError(str(e)) from e
 
     async def update(self, person_id: str, patch: PersonPatch) -> PersonOutput:
-        existing = await self.get(person_id)
+        async def update_transaction(tx: AsyncManagedTransaction) -> PersonOutput:
+            await lock_nodes(tx, "Person", [person_id])
+            result = await tx.run(PersonDatabase.GET_QUERY, id=person_id)
+            record = await result.single()
+            if record is None:
+                raise DataNotFoundError(f"Person with ID '{person_id}' not found")
 
-        async def update_transaction(tx: AsyncManagedTransaction) -> None:
-            new_bdrc = patch.bdrc if patch.bdrc is not None else existing.bdrc
-            new_wiki = patch.wiki if patch.wiki is not None else existing.wiki
+            properties = patch.model_dump(include={"bdrc", "wiki"}, exclude_unset=True)
+            if properties:
+                await tx.run(PersonDatabase.UPDATE_PROPERTIES_QUERY, id=person_id, properties=properties)
 
-            await tx.run(
-                PersonDatabase.UPDATE_PROPERTIES_QUERY,
-                id=person_id,
-                bdrc=new_bdrc,
-                wiki=new_wiki,
-            )
-
-            if patch.name is not None or patch.alt_names is not None:
+            if patch.model_fields_set & {"name", "alt_names"}:
+                existing = {key: value for key, value in record["person"].items() if key in PersonBase.model_fields}
+                updated = PersonBase.model_validate(existing | patch.model_dump(exclude_unset=True))
                 await tx.run(PersonDatabase.DELETE_NAME_QUERY, person_id=person_id)
-
-                new_name = patch.name.root if patch.name is not None else existing.name.root
-                new_alt_names = (
-                    [alt.root for alt in patch.alt_names]
-                    if patch.alt_names is not None
-                    else ([alt.root for alt in existing.alt_names] if existing.alt_names else None)
+                primary_nomen_id = await NomenDatabase.create_with_transaction(
+                    tx, updated.name.root, [alt.root for alt in updated.alt_names or []]
                 )
-
-                primary_nomen_id = await NomenDatabase.create_with_transaction(tx, new_name, new_alt_names)
                 await tx.run(PersonDatabase.LINK_NAME_QUERY, person_id=person_id, nomen_id=primary_nomen_id)
+            return await self.get_with_transaction(tx, person_id)
 
         async with self.session as session:
             try:
-                await session.execute_write(update_transaction)
-                return await self.get(person_id)
+                return await session.execute_write(update_transaction)
             except ConstraintError as e:
                 raise DataConflictError(str(e)) from e
 

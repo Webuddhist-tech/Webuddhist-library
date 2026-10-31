@@ -1,19 +1,21 @@
 import logging
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from neo4j.exceptions import ClientError as Neo4jClientError
+from opensearchpy.exceptions import OpenSearchException
 from pydantic import ValidationError
 
 from catalog_search import CatalogSearchService
 from config import settings
 from content_search import ContentSearchService
 from database import Database
-from exceptions import OpenPechaError
+from exceptions import InvalidRequestError, OpenPechaError
 from observability import setup_telemetry, shutdown_telemetry
 from routers.alignments import router as alignments_router
 from routers.annotation.bibliographic import router as bibliographic_router
@@ -31,6 +33,7 @@ from routers.recordings import router as recordings_router
 from routers.segments import router as segments_router
 from routers.tags import router as tags_router
 from routers.texts import router as texts_router
+from search_client import create_search_client
 from storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -66,54 +69,53 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(name)s - %(message)s")
     logger.info("Starting OpenPecha API")
 
-    setup_telemetry(app)
+    async with AsyncExitStack() as stack:
+        stack.callback(shutdown_telemetry)
+        setup_telemetry(app)
 
-    if not app.state.testing and not settings.opensearch_endpoint:
-        raise RuntimeError("OPENSEARCH_ENDPOINT is required")
+        if not app.state.testing and settings.neo4j_uri:
+            db = Database(
+                neo4j_uri=settings.neo4j_uri,
+                neo4j_auth=(settings.neo4j_username, settings.neo4j_password),
+                neo4j_database=settings.neo4j_database,
+            )
+            stack.push_async_callback(db.close)
+            await db.verify_connectivity()
+            app.state.db = db
 
-    if not app.state.testing and settings.neo4j_uri:
-        db = Database(
-            neo4j_uri=settings.neo4j_uri,
-            neo4j_auth=(settings.neo4j_username, settings.neo4j_password),
-            neo4j_database=settings.neo4j_database,
-        )
-        await db.verify_connectivity()
-        app.state.db = db
-        storage = Storage(bucket_name=settings.aws_s3_bucket, region=settings.aws_region)
-        await storage.connect()
-        app.state.storage = storage
-        content_search = ContentSearchService(
-            endpoint=settings.opensearch_endpoint,
-            index_name=settings.opensearch_index,
-            region=settings.aws_region,
-            auth_mode=settings.opensearch_auth_mode,
-            username=settings.opensearch_username,
-            password=settings.opensearch_password,
-        )
-        await content_search.connect()
-        app.state.content_search = content_search
-        catalog_search = CatalogSearchService(
-            endpoint=settings.opensearch_endpoint,
-            index_name=settings.opensearch_catalog_index,
-            region=settings.aws_region,
-            auth_mode=settings.opensearch_auth_mode,
-            username=settings.opensearch_username,
-            password=settings.opensearch_password,
-        )
-        await catalog_search.connect()
-        app.state.catalog_search = catalog_search
-        logger.info("Database, storage, and content search initialized")
+            storage = Storage(bucket_name=settings.aws_s3_bucket, region=settings.aws_region)
+            stack.push_async_callback(storage.close)
+            await storage.connect()
+            app.state.storage = storage
+
+            if settings.opensearch_endpoint:
+                try:
+                    search_client = create_search_client(
+                        endpoint=settings.opensearch_endpoint,
+                        region=settings.aws_region,
+                        auth_mode=settings.opensearch_auth_mode,
+                        username=settings.opensearch_username,
+                        password=settings.opensearch_password,
+                        request_timeout=10,
+                        max_retries=0,
+                    )
+                    stack.push_async_callback(search_client.close)
+                    content_search = ContentSearchService(client=search_client, index_name=settings.opensearch_index)
+                    catalog_search = CatalogSearchService(
+                        client=search_client, index_name=settings.opensearch_catalog_index
+                    )
+                    await content_search.setup_index()
+                    await catalog_search.setup_index()
+                except InvalidRequestError, BotoCoreError, ClientError, OpenSearchException, ValueError:
+                    logger.exception("Search disabled until restart; canonical CRUD remains available")
+                else:
+                    app.state.content_search = content_search
+                    app.state.catalog_search = catalog_search
+            logger.info("Canonical stores initialized")
+        else:
+            logger.info("Skipping database initialization (testing mode or no NEO4J_URI)")
         yield
-        await catalog_search.close()
-        await content_search.close()
-        await storage.close()
-        await db.close()
-        logger.info("Database, storage, and content search connections closed")
-    else:
-        logger.info("Skipping database initialization (testing mode or no NEO4J_URI)")
-        yield
 
-    shutdown_telemetry()
     logger.info("Shutting down OpenPecha API")
 
 
@@ -159,6 +161,10 @@ def create_app(*, testing: bool = False) -> FastAPI:
         status_code, message = _map_neo4j_client_error(exc)
         logger.warning("Neo4j client error (%s): %s", getattr(exc, "code", "unknown"), message)
         return JSONResponse(status_code=status_code, content={"error": message})
+
+    @app.exception_handler(OpenSearchException)
+    async def search_exception_handler(_request: Request, _exc: OpenSearchException) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"error": "Search is temporarily unavailable"})
 
     @app.exception_handler(Exception)
     async def general_exception_handler(_request: Request, exc: Exception) -> JSONResponse:

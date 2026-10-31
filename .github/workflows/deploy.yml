@@ -7,6 +7,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -47,54 +51,47 @@ jobs:
         run: |
           cat << 'EOF' > deploy_script.sh
           #!/bin/bash
-          set -e
-          export HOME=/root
-          cd /opt/openpecha-backend || exit 1
+          set -euo pipefail
+          cd /opt/openpecha-backend
 
-          git config --global --add safe.directory /opt/openpecha-backend
+          DEPLOY_SHA=${{ github.sha }}
+          git -c safe.directory="$PWD" fetch origin "$DEPLOY_SHA"
+          git -c safe.directory="$PWD" diff --quiet
+          git -c safe.directory="$PWD" diff --cached --quiet
+          git -c safe.directory="$PWD" checkout --detach "$DEPLOY_SHA"
 
-          git fetch origin ${{ github.ref_name }}
-          git checkout ${{ github.ref_name }}
-          git pull origin ${{ github.ref_name }}
-
+          umask 077
           cat << 'ENV_EOF' > .env
           NEO4J_URI=${{ vars.NEO4J_URI }}
+          NEO4J_DATABASE=${{ vars.NEO4J_DATABASE || 'neo4j' }}
           NEO4J_USERNAME=${{ vars.NEO4J_USERNAME }}
           NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}
           AWS_REGION=${{ vars.AWS_REGION }}
           AWS_S3_BUCKET=${{ vars.AWS_S3_BUCKET }}
-          SEARCH_API_URL=${{ vars.SEARCH_API_URL }}
           OPENSEARCH_ENDPOINT=${{ vars.OPENSEARCH_ENDPOINT }}
+          OPENSEARCH_INDEX=${{ vars.OPENSEARCH_INDEX || 'content-search' }}
+          OPENSEARCH_CATALOG_INDEX=${{ vars.OPENSEARCH_CATALOG_INDEX || 'catalog-search' }}
+          OPENSEARCH_AUTH_MODE=${{ vars.OPENSEARCH_AUTH_MODE || 'aws' }}
+          OPENSEARCH_USERNAME=${{ vars.OPENSEARCH_USERNAME }}
+          OPENSEARCH_PASSWORD=${{ secrets.OPENSEARCH_PASSWORD }}
           ENVIRONMENT=${{ vars.ENVIRONMENT }}
-          OTEL_ENABLED=${{ vars.OTEL_ENABLED }}
+          OTEL_ENABLED=${{ vars.OTEL_ENABLED || 'false' }}
           OTEL_SERVICE_NAME=${{ vars.OTEL_SERVICE_NAME }}
           OTEL_EXPORTER_OTLP_ENDPOINT=${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
           OTEL_EXPORTER_OTLP_HEADERS=${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
           ENV_EOF
+          chmod 600 .env
 
-          REQUIRED_PYTHON=python3.14
-
-          if ! command -v $REQUIRED_PYTHON &> /dev/null; then
-            echo "Error: Python 3.14 is not installed on the target server"
-            exit 1
-          fi
-
-          if [ -d ".venv" ]; then
-            VENV_PYTHON=$(.venv/bin/python3 --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
-            if [ "$VENV_PYTHON" != "3.14" ]; then
-              rm -rf .venv
-            fi
-          fi
-
-          [ -d ".venv" ] || $REQUIRED_PYTHON -m venv .venv
           source .venv/bin/activate
           pip install -r requirements.txt
           python -m scripts.install_neo4j_triggers
-
-          OWNER=$(stat -c '%U:%G' .)
-          chown -R "$OWNER" .
-
+          owner=$(stat -c '%U:%G' .)
+          chown -R "$owner" .
           sudo systemctl restart openpecha-api
+          if ! curl --fail --retry 10 --retry-delay 2 --retry-all-errors http://127.0.0.1:8000/__/health; then
+            sudo journalctl -u openpecha-api -n 100 --no-pager
+            exit 1
+          fi
           EOF
 
       - name: Execute via SSM
@@ -116,7 +113,7 @@ jobs:
             --instance-id "${{ vars.EC2_INSTANCE_ID }}" || export EXIT_CODE=$?
 
           # If the deployment failed, fetch the actual error logs from the EC2
-          if [ "${EXIT_CODE}" != "" ]; then
+          if [ "${EXIT_CODE:-}" != "" ]; then
             aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "${{ vars.EC2_INSTANCE_ID }}" \

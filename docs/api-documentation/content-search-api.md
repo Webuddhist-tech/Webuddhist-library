@@ -2,7 +2,7 @@
 
 Content search finds where a query appears in stored edition content and returns the text, edition, and segment locations.
 
-The base text remains canonical in S3. OpenSearch stores derived, fixed-size overlapping chunks with segment span metadata.
+Neo4j identifies the canonical immutable content object in S3. OpenSearch stores 4,000-character chunks with 500 characters of overlap; segment IDs come from the current graph.
 
 ## Authentication
 
@@ -28,9 +28,11 @@ Query parameters:
 | `text_id` | string | No | - | Filter to one text |
 | `edition_id` | string | No | - | Filter to one edition |
 
-Exact search uses the analyzed content field to find candidate chunks, then verifies the exact substring and computes `match_span` from the returned chunk text. Similar search uses the same analyzed content field for near-phrase matches and leaves `match_span` as `null` unless a precise match span is available.
+Exact search preserves case, punctuation, and the original Unicode characters without normalization. It escapes wildcard metacharacters, selects candidate chunks with a bounded literal prefix, and verifies the complete substring. Queries can contain 1–10,000 characters; queries longer than the overlap fetch adjacent chunks from the same content object to verify boundary-spanning matches. Each match is returned once. The limit counts occurrences, ordered by chunk relevance, with edition ID and position breaking ties. Analyzed phrase matching supplies optional relevance scores; literal matches remain eligible when the analyzer cannot score them. Similar search ranks near-phrase matches within chunks and returns non-overlapping contexts, with `match_span: null`. It can return multiple passages from one edition.
 
-`context` is a plain text fragment from the matched chunk. `context_span` is the location of that returned `context` in the full edition text.
+Deleted, stale, unsegmented, and non-overlapping passages are filtered against Neo4j in batches, with an internal revision recheck. Search stops when it fills the requested limit or inspects 1,000 candidate chunks or 10,000 candidate occurrences. Results may therefore be incomplete, and indexing updates may lag behind content changes.
+
+`context` is a plain text fragment from the matched passage. `context_span` is the location of that returned `context` in the full edition text.
 
 `segment_ids` contains all segment IDs covered by the result. For exact search, these are the segments overlapping `match_span`; for similar search, these are the segments covered by `context_span`.
 
@@ -61,30 +63,20 @@ Error responses:
 
 - `400 Bad Request`: OpenSearch auth mode is invalid.
 - `401 Unauthorized`: Missing or invalid API key in deployed environments.
-- `422 Unprocessable Entity`: Missing `query`, invalid `search_type`, or invalid `limit`.
+- `422 Unprocessable Entity`: Missing/oversized `query`, invalid `search_type`, or invalid `limit`.
+- `503 Service Unavailable`: Search is unavailable; canonical CRUD remains available.
 
 ## Operations
 
-The content search index is derived data:
+Content mutations and segmentation changes request best-effort background updates after committing. Updates replace an edition's chunks. Errors are logged; partial, missed, or reordered updates can leave missing results until reindexing. Current graph checks exclude deleted editions and hits for old content objects.
 
-- Creating an edition indexes overlapping content chunks in the background.
-- Patching edition content reindexes the edition after the storage write succeeds.
-- Deleting an edition deletes derived OpenSearch documents for that edition.
-- Existing editions can be bulk indexed with `python -m scripts.content_search reindex`.
-
-## Setup
+For a full rebuild, stop API/import writers, then run:
 
 ```bash
-python -m scripts.content_search setup-index
-python -m scripts.content_search reindex
+python -m scripts.reindex --writes-paused
 ```
 
-When the OpenSearch mapping changes, recreate the derived index before reindexing:
-
-```bash
-python -m scripts.content_search recreate-index
-python -m scripts.content_search reindex
-```
+This builds replacements, verifies document counts, and switches both configured names together. Keep `OPENSEARCH_INDEX=content-search` and `OPENSEARCH_CATALOG_INDEX=catalog-search`. The first rebuild replaces concrete indexes with aliases of the same names; subsequent rebuilds retain previous backing indexes. Content projection version 3 requires this explicit rebuild for older chunk or whole-edition mappings; deployment does not reindex automatically. See [the cutover runbook](../design/cutover.md) for backup prerequisites and rollback limits.
 
 ## Developer Notes
 
@@ -95,4 +87,4 @@ Relevant code:
 - `models/content_search.py`
 - `models/requests.py`
 - `database/segment_database.py`
-- `scripts/content_search.py`
+- `scripts/reindex.py`

@@ -1,9 +1,7 @@
 """Regression tests for Neo4j create-result handling.
 
-Create methods must strictly consume exactly one returned record and return the
-identifier read from Neo4j, rather than assuming that a submitted identifier was
-persisted. These tests intentionally fail until every create path adopts that
-contract.
+Create methods must verify the identifiers returned by Neo4j rather than assuming
+that submitted identifiers were persisted.
 """
 
 from types import SimpleNamespace
@@ -11,11 +9,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import database.annotation.bibliographic_database as bibliographic_module
-import database.annotation.mark_database as mark_module
-import database.annotation.note_database as note_module
 import database.annotation.pagination_database as pagination_module
 import database.annotation.segmentation_database as segmentation_module
+import database.annotation.single_span as single_span_module
 import database.annotation.table_of_contents_database as toc_module
 import database.nomen_database as nomen_module
 import database.person_database as person_module
@@ -29,6 +25,7 @@ from database.annotation.table_of_contents_database import TableOfContentsDataba
 from database.api_key_database import ApiKeyDatabase
 from database.application_database import ApplicationDatabase
 from database.category_database import CategoryDatabase
+from database.content_state import ContentState
 from database.database_validator import DatabaseValidator
 from database.edition_database import EditionDatabase
 from database.language_database import LanguageDatabase
@@ -55,6 +52,12 @@ class TrackingResult:
     def __init__(self, record):
         self.record = record
         self.single_strict_args = []
+
+    async def data(self):
+        return []
+
+    async def consume(self):
+        return None
 
     async def single(self, strict=False):
         self.single_strict_args.append(strict)
@@ -83,8 +86,8 @@ class FakeSession:
     async def __aexit__(self, *_args):
         return None
 
-    async def execute_write(self, callback):
-        return await callback(self.tx)
+    async def execute_write(self, callback, *args, **kwargs):
+        return await callback(self.tx, *args, **kwargs)
 
 
 class FakeDatabase:
@@ -103,12 +106,14 @@ def assert_strict_neo4j_id(result, returned_id, field):
 
 @pytest.fixture
 def skip_span_validation(monkeypatch):
-    monkeypatch.setattr(DatabaseValidator, "validate_edition_spans", AsyncMock())
+    state = ContentState("edition-id", "text-id", "key", 1, 0)
+    for module in (single_span_module, pagination_module, segmentation_module, toc_module):
+        monkeypatch.setattr(module, "touch_edition", AsyncMock(return_value=state))
 
 
 async def test_note_create_strictly_returns_neo4j_id(monkeypatch, skip_span_validation):
-    monkeypatch.setattr(note_module, "generate_id", lambda: "submitted-note-id")
-    create_result = TrackingResult({"note_id": "neo4j-note-id"})
+    monkeypatch.setattr(single_span_module, "generate_id", lambda: "submitted-note-id")
+    create_result = TrackingResult({"id": "neo4j-note-id"})
     tx = FakeTransaction({NoteDatabase.CREATE_QUERY: create_result})
 
     returned_id = await NoteDatabase.add_with_transaction(
@@ -118,11 +123,11 @@ async def test_note_create_strictly_returns_neo4j_id(monkeypatch, skip_span_vali
         "durchen",
     )
 
-    assert_strict_neo4j_id(create_result, returned_id, "note_id")
+    assert_strict_neo4j_id(create_result, returned_id, "id")
 
 
 async def test_bibliographic_create_strictly_returns_neo4j_id(monkeypatch, skip_span_validation):
-    monkeypatch.setattr(bibliographic_module, "generate_id", lambda: "submitted-bibliographic-id")
+    monkeypatch.setattr(single_span_module, "generate_id", lambda: "submitted-bibliographic-id")
     create_result = TrackingResult({"id": "neo4j-bibliographic-id"})
     tx = FakeTransaction({BibliographicDatabase.CREATE_QUERY: create_result})
 
@@ -139,8 +144,8 @@ async def test_bibliographic_create_strictly_returns_neo4j_id(monkeypatch, skip_
 
 
 async def test_mark_create_strictly_returns_neo4j_id(monkeypatch, skip_span_validation):
-    monkeypatch.setattr(mark_module, "generate_id", lambda: "submitted-mark-id")
-    create_result = TrackingResult({"mark_id": "neo4j-mark-id"})
+    monkeypatch.setattr(single_span_module, "generate_id", lambda: "submitted-mark-id")
+    create_result = TrackingResult({"id": "neo4j-mark-id"})
     tx = FakeTransaction({MarkDatabase.CREATE_QUERY: create_result})
 
     returned_id = await MarkDatabase.add_with_transaction(
@@ -150,16 +155,13 @@ async def test_mark_create_strictly_returns_neo4j_id(monkeypatch, skip_span_vali
         MarkType.YIGCHUNG,
     )
 
-    assert_strict_neo4j_id(create_result, returned_id, "mark_id")
+    assert_strict_neo4j_id(create_result, returned_id, "id")
 
 
 async def test_pagination_create_strictly_returns_neo4j_id(monkeypatch, skip_span_validation):
     monkeypatch.setattr(pagination_module, "generate_id", lambda: "submitted-pagination-id")
-    create_result = TrackingResult({"id": "neo4j-pagination-id", "count": 1})
-    tx = FakeTransaction(
-        {PaginationDatabase.CREATE_QUERY: create_result},
-        default_record={"exists": False},
-    )
+    create_result = TrackingResult({"id": "neo4j-pagination-id"})
+    tx = FakeTransaction({PaginationDatabase.CREATE_QUERY: create_result})
     pagination = PaginationInput(
         volumes=[Volume(pages=[Page(reference="1a", lines=[Span(start=0, end=1)])])]
     )
@@ -213,15 +215,18 @@ async def test_table_of_contents_create_strictly_returns_neo4j_id(
     assert_strict_neo4j_id(create_result, returned_id, "id")
 
 
-async def test_nomen_create_strictly_returns_neo4j_id(monkeypatch):
+@pytest.mark.parametrize("returned_ids", [["submitted-nomen-id"], [], ["unexpected-id"]])
+async def test_nomen_create_verifies_persisted_ids(monkeypatch, returned_ids):
     monkeypatch.setattr(DatabaseValidator, "validate_language_codes_exist", AsyncMock())
     monkeypatch.setattr(nomen_module, "generate_id", lambda: "submitted-nomen-id")
-    create_result = TrackingResult({"nomen_id": "neo4j-nomen-id"})
-    tx = FakeTransaction({NomenDatabase.CREATE_QUERY: create_result})
+    create_result = SimpleNamespace(data=AsyncMock(return_value=[{"id": value} for value in returned_ids]))
+    tx = FakeTransaction({NomenDatabase.CREATE_MANY_QUERY: create_result})
 
-    returned_id = await NomenDatabase.create_with_transaction(tx, {"en": "Title"})
-
-    assert_strict_neo4j_id(create_result, returned_id, "nomen_id")
+    if returned_ids == ["submitted-nomen-id"]:
+        assert await NomenDatabase.create_with_transaction(tx, {"en": "Title"}) == "submitted-nomen-id"
+    else:
+        with pytest.raises(RuntimeError, match="Incomplete nomen creation"):
+            await NomenDatabase.create_with_transaction(tx, {"en": "Title"})
 
 
 async def test_person_create_strictly_returns_neo4j_id(monkeypatch):
@@ -269,7 +274,7 @@ async def test_text_create_strictly_returns_neo4j_id(
         AsyncMock(return_value="nomen-id"),
     )
     monkeypatch.setattr(text_module, "generate_id", lambda: "submitted-work-id")
-    create_result = TrackingResult({"text_id": "neo4j-text-id"})
+    create_result = TrackingResult({"text_id": "neo4j-text-id", "work_id": "neo4j-work-id"})
     tx = FakeTransaction({create_query: create_result})
     text = SimpleNamespace(
         language="en",

@@ -11,9 +11,7 @@ from .enums import AttributeType, BibliographyType, SegmentType
 
 
 class Span(OpenPechaModel):
-    """Half-open character range. An empty range marks a position rather than covering text, which is
-    how a page with no text and a heading with no content of its own are expressed.
-    """
+    """Half-open character range. Empty ranges mark positions, such as headings without their own content."""
 
     start: int = Field(..., ge=0, description="Start character position (inclusive)")
     end: int = Field(..., ge=0, description="End character position (exclusive)")
@@ -43,10 +41,6 @@ def _validate_disjoint(spans: Sequence[Span]) -> None:
     _validate_layout(spans, lambda previous, current: current.start >= previous.end, "sorted and non-overlapping")
 
 
-def _validate_sorted(spans: Sequence[Span]) -> None:
-    _validate_layout(spans, lambda previous, current: current.start >= previous.start, "sorted by start")
-
-
 class AnnotationMetadata(OpenPechaModel):
     name: NonEmptyStr | None = None
 
@@ -70,7 +64,7 @@ class LinesModel(OpenPechaModel):
 
     @property
     def span(self) -> Span:
-        return Span.model_validate({"start": self.lines[0].start, "end": self.lines[-1].end})
+        return Span(start=self.lines[0].start, end=self.lines[-1].end)
 
 
 class SegmentInput(LinesModel):
@@ -100,16 +94,18 @@ class RelatedSegmentationOutput(OpenPechaModel):
 
 
 class SegmentationInput(OpenPechaModel):
-    segments: list[SegmentInput] = Field(min_length=1)
+    segments: list[SegmentInput] = Field(
+        min_length=1, description="Ordered, contiguous segments without overlaps or gaps"
+    )
     metadata: AnnotationMetadata | None = None
 
     @property
     def max_end(self) -> int:
-        return max(segment.span.end for segment in self.segments)
+        return self.segments[-1].lines[-1].end
 
     @model_validator(mode="after")
-    def validate_segments_sorted(self) -> Self:
-        _validate_sorted([segment.span for segment in self.segments])
+    def validate_segments_contiguous(self) -> Self:
+        _validate_contiguous([segment.span for segment in self.segments])
         return self
 
     @model_validator(mode="after")
@@ -130,6 +126,12 @@ class SegmentationOutput(OpenPechaModel):
 class Page(LinesModel):
     reference: NonEmptyStr
 
+    @model_validator(mode="after")
+    def validate_page_nonempty(self) -> Self:
+        if self.lines[0].start == self.lines[-1].end:
+            raise ValueError("Pages must contain at least one character")
+        return self
+
 
 class Volume(OpenPechaModel):
     model_config = ConfigDict(extra="forbid", json_schema_mode_override="validation")
@@ -140,7 +142,7 @@ class Volume(OpenPechaModel):
 
     @property
     def span(self) -> Span:
-        return Span.model_validate({"start": self.pages[0].span.start, "end": self.pages[-1].span.end})
+        return Span(start=self.pages[0].lines[0].start, end=self.pages[-1].lines[-1].end)
 
     @model_validator(mode="after")
     def validate_pages_contiguous(self) -> Self:

@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, LiteralString
 
+from database.content_state import read_value, touch_annotation, touch_edition
 from database.database_validator import DatabaseValidator
 from database.nomen_database import NomenDatabase
 from exceptions import DataNotFoundError
@@ -141,40 +142,40 @@ class TableOfContentsDatabase:
         parent_id: str | None = None,
     ) -> list[dict[str, str | int | None]]:
         flattened: list[dict[str, str | int | None]] = []
-        for section in sections:
-            section_id = generate_id()
-            title_nomen_id = await NomenDatabase.create_with_transaction(tx, section.title.root, None)
-            summary_nomen_id = (
-                await NomenDatabase.create_with_transaction(tx, section.summary.root, None)
-                if section.summary is not None
-                else None
-            )
-            flattened.append(
-                {
-                    "id": section_id,
-                    "parent_id": parent_id,
-                    "title_nomen_id": title_nomen_id,
-                    "summary_nomen_id": summary_nomen_id,
-                    "span_start": section.span.start,
-                    "span_end": section.span.end,
-                }
-            )
-            flattened.extend(
-                await TableOfContentsDatabase._flatten_sections(tx, section.subsections, parent_id=section_id)
-            )
+        nomens: dict[str, dict[str, str]] = {}
+
+        def visit(items: list[TableOfContentsSectionInput], parent: str | None) -> None:
+            for section in items:
+                section_id, title_id = generate_id(), generate_id()
+                nomens[title_id] = section.title.root
+                summary_id = generate_id() if section.summary is not None else None
+                if summary_id is not None and section.summary is not None:
+                    nomens[summary_id] = section.summary.root
+                flattened.append(
+                    {
+                        "id": section_id,
+                        "parent_id": parent,
+                        "title_nomen_id": title_id,
+                        "summary_nomen_id": summary_id,
+                        "span_start": section.span.start,
+                        "span_end": section.span.end,
+                    }
+                )
+                visit(section.subsections, section_id)
+
+        visit(sections, parent_id)
+        await NomenDatabase.create_many_with_transaction(tx, nomens)
         return flattened
 
     @staticmethod
     def _build_sections(records: Sequence[dict[str, Any] | Record]) -> list[TableOfContentsSectionOutput]:
         nodes: dict[str, TableOfContentsSectionOutput] = {}
         parent_ids: dict[str, str | None] = {}
-        spans: dict[str, tuple[int, int]] = {}
 
         for record in records:
             node = TableOfContentsSectionOutput.model_validate(record["section"])
             nodes[node.id] = node
             parent_ids[node.id] = record["parent_id"]
-            spans[node.id] = (node.span.start, node.span.end)
 
         roots: list[TableOfContentsSectionOutput] = []
         for node_id, node in nodes.items():
@@ -185,8 +186,8 @@ class TableOfContentsDatabase:
                 roots.append(node)
 
         for node in nodes.values():
-            node.subsections.sort(key=lambda item: (*spans[item.id], item.id))
-        roots.sort(key=lambda item: (*spans[item.id], item.id))
+            node.subsections.sort(key=lambda item: (item.span.start, item.span.end, item.id))
+        roots.sort(key=lambda item: (item.span.start, item.span.end, item.id))
         return roots
 
     @staticmethod
@@ -197,24 +198,28 @@ class TableOfContentsDatabase:
         return TableOfContentsOutput.model_validate(toc_data | {"sections": sections})
 
     async def get(self, toc_id: str) -> TableOfContentsOutput:
+        async def read(tx: AsyncManagedTransaction) -> TableOfContentsOutput:
+            record = await (await tx.run(self.GET_BY_ID_QUERY, toc_id=toc_id)).single()
+            if record is None:
+                raise DataNotFoundError(f"Table of contents with ID '{toc_id}' not found")
+            return await read_value(tx, record["toc"]["edition_id"], lambda tx: self.get_with_transaction(tx, toc_id))
+
         async with self._db.get_session() as session:
-            return await session.execute_read(lambda tx: TableOfContentsDatabase.get_with_transaction(tx, toc_id))
+            return await session.execute_read(read)
 
     async def get_all(self, edition_id: str) -> list[TableOfContentsOutput]:
         async with self._db.get_session() as session:
             return await session.execute_read(
-                lambda tx: TableOfContentsDatabase.get_all_with_transaction(tx, edition_id)
+                read_value, edition_id, lambda tx: TableOfContentsDatabase.get_all_with_transaction(tx, edition_id)
             )
 
     async def add(self, edition_id: str, toc: TableOfContentsInput) -> str:
         async with self._db.get_session() as session:
-            return await session.execute_write(
-                lambda tx: TableOfContentsDatabase.add_with_transaction(tx, edition_id, toc)
-            )
+            return await session.execute_write(TableOfContentsDatabase.add_with_transaction, edition_id, toc)
 
     async def delete(self, toc_id: str) -> None:
         async with self._db.get_session() as session:
-            await session.execute_write(lambda tx: TableOfContentsDatabase.delete_with_transaction(tx, toc_id))
+            await session.execute_write(TableOfContentsDatabase.delete_with_transaction, toc_id)
 
     @staticmethod
     async def get_with_transaction(tx: AsyncManagedTransaction, toc_id: str) -> TableOfContentsOutput:
@@ -236,7 +241,8 @@ class TableOfContentsDatabase:
         edition_id: str,
         toc: TableOfContentsInput,
     ) -> str:
-        await DatabaseValidator.validate_edition_spans(tx, edition_id, toc.max_end)
+        state = await touch_edition(tx, edition_id)
+        state.validate_span(toc.max_end)
 
         toc_id = generate_id()
         metadata_id = generate_id() if toc.metadata is not None else None
@@ -252,23 +258,18 @@ class TableOfContentsDatabase:
         )
         record = await result.single(strict=True)
 
-        sections_result = await tx.run(TableOfContentsDatabase.CREATE_SECTIONS_QUERY, toc_id=toc_id, sections=sections)
-        sections_record = await sections_result.single(strict=True)
-        if sections_record["count"] != len(sections):
-            raise DataNotFoundError(f"Failed to create table of contents sections for table of contents '{toc_id}'")
-
-        hierarchy_result = await tx.run(TableOfContentsDatabase.CREATE_HIERARCHY_QUERY, sections=sections)
-        hierarchy_record = await hierarchy_result.single(strict=True)
-        expected_hierarchy_count = sum(section["parent_id"] is not None for section in sections)
-        if hierarchy_record["count"] != expected_hierarchy_count:
-            raise DataNotFoundError(f"Failed to create table of contents hierarchy for table of contents '{toc_id}'")
+        writes: tuple[tuple[LiteralString, int], ...] = (
+            (TableOfContentsDatabase.CREATE_SECTIONS_QUERY, len(sections)),
+            (TableOfContentsDatabase.CREATE_HIERARCHY_QUERY, sum(s["parent_id"] is not None for s in sections)),
+        )
+        for query, expected in writes:
+            result = await tx.run(query, toc_id=toc_id, sections=sections)
+            if (await result.single(strict=True))["count"] != expected:
+                raise DataNotFoundError(f"Failed to create table of contents sections for '{toc_id}'")
 
         return str(record["id"])
 
     @staticmethod
     async def delete_with_transaction(tx: AsyncManagedTransaction, toc_id: str) -> None:
+        await touch_annotation(tx, "TableOfContents", toc_id)
         await tx.run(TableOfContentsDatabase.DELETE_QUERY, toc_id=toc_id)
-
-    @staticmethod
-    async def delete_all_with_transaction(tx: AsyncManagedTransaction, edition_id: str) -> None:
-        await tx.run(TableOfContentsDatabase.DELETE_ALL_QUERY, edition_id=edition_id)
