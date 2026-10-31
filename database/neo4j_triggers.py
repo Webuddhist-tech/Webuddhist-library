@@ -7,8 +7,6 @@ logger = logging.getLogger(__name__)
 DATABASE_NAME = "neo4j"
 SYSTEM_DATABASE_NAME = "system"
 
-RETIRED_TRIGGERS = ("enforce_span_start_lt_end",)
-
 # Each trigger is a dict with:
 #   name: unique trigger name
 #   query: Cypher to execute on each transaction
@@ -1075,11 +1073,10 @@ TRIGGERS.append(
 
 
 async def install_triggers(driver: AsyncDriver) -> None:
-    """Install all structural constraint triggers. Idempotent — safe to call on every startup."""
+    """Replace all installed triggers with TRIGGERS in one transaction. Idempotent — safe to call on every deploy."""
 
     async def write(tx: AsyncManagedTransaction) -> None:
-        for name in RETIRED_TRIGGERS:
-            await tx.run("CALL apoc.trigger.drop($database, $name)", database=DATABASE_NAME, name=name)
+        await tx.run("CALL apoc.trigger.dropAll($database)", database=DATABASE_NAME)
 
         for trigger in TRIGGERS:
             await tx.run(

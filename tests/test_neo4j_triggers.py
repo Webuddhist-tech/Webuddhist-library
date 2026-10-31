@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from database.neo4j_triggers import TRIGGERS
+from database.neo4j_triggers import DATABASE_NAME, SYSTEM_DATABASE_NAME, TRIGGERS, install_triggers
 
 
 @dataclass(frozen=True)
@@ -253,4 +253,24 @@ async def test_each_trigger_rejects_intentional_invalid_data(test_database, case
         with pytest.raises(Exception, match=case.name):
             result = await session.run(query, trigger_query=TRIGGER_QUERY_BY_NAME[case.name])
             await result.consume()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_install_triggers_replaces_stale_triggers(test_database) -> None:
+    driver = test_database._driver
+    async with driver.session(database=SYSTEM_DATABASE_NAME) as session:
+        result = await session.run(
+            "CALL apoc.trigger.install($database, 'stale_trigger', 'RETURN 1', {phase: 'before'})",
+            database=DATABASE_NAME,
+        )
+        await result.consume()
+
+    await install_triggers(driver)
+
+    async with driver.session(database=SYSTEM_DATABASE_NAME) as session:
+        result = await session.run("CALL apoc.trigger.show($database) YIELD name, query", database=DATABASE_NAME)
+        stored = {record["name"]: record["query"] async for record in result}
+
+    assert set(stored) == {trigger["name"] for trigger in TRIGGERS}
+    assert all(query.startswith("CYPHER 25 ") for query in stored.values())
 

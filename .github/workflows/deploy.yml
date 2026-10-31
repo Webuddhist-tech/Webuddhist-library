@@ -89,6 +89,7 @@ jobs:
           [ -d ".venv" ] || $REQUIRED_PYTHON -m venv .venv
           source .venv/bin/activate
           pip install -r requirements.txt
+          python -m scripts.install_neo4j_triggers
 
           OWNER=$(stat -c '%U:%G' .)
           chown -R "$OWNER" .
