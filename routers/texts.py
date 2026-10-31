@@ -8,8 +8,8 @@ from content_service import create_edition as publish_edition
 from dependencies import OptionalAppHeader, get_api_key, get_catalog_search, get_db, get_storage
 from exceptions import ServiceUnavailableError
 from models.edition import EditionOutput
-from models.requests import EditionRequestModel, EditionsQueryParams, TextsQueryParams
-from models.responses import IdResponse, PaginatedResponse
+from models.requests import EditionRequestModel, EditionsQueryParams, TextFacetFilter, TextsQueryParams
+from models.responses import IdResponse, PaginatedResponse, TextLanguageResponse
 from models.text import TextInput, TextOutput, TextPatch
 from search_updates import update_search
 
@@ -55,6 +55,20 @@ async def get_all_texts(
         application=x_application,
     )
     return PaginatedResponse.from_items(texts, offset=params.offset, limit=params.limit)
+
+
+@router.get(
+    "/languages",
+    summary="List languages of texts",
+    description="Count matching texts per language. Accepts the GET /v2/texts filters except language and title.",
+)
+async def get_text_languages(
+    params: Annotated[TextFacetFilter, Query()],
+    _api_key: Annotated[str, Depends(get_api_key)],
+    db: Annotated[Database, Depends(get_db)],
+) -> list[TextLanguageResponse]:
+    """List the languages of texts matching the filters, with text counts."""
+    return await db.text.get_languages(params)
 
 
 @router.get(

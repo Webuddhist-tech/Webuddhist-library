@@ -4,7 +4,8 @@ from neo4j.exceptions import ConstraintError
 
 from exceptions import DataConflictError, DataNotFoundError, DataValidationError
 from identifier import generate_id
-from models.requests import TextFilter
+from models.requests import TextFacetFilter, TextFilter
+from models.responses import TextLanguageResponse
 from models.text import TextBase, TextInput, TextOutput, TextPatch
 
 from .contribution_database import ContributionDatabase, contributions_return
@@ -72,55 +73,66 @@ class TextDatabase:
     RETURN {_TEXT_RETURN}
     """
 
-    GET_ALL_QUERY: LiteralString = f"""
-    CALL () {{
-        WHEN $bdrc IS NOT NULL THEN {{ MATCH (e:Text {{bdrc: $bdrc}}) RETURN e }}
-        WHEN $wiki IS NOT NULL THEN {{ MATCH (e:Text {{wiki: $wiki}}) RETURN e }}
-        WHEN $author_id IS NOT NULL THEN {{
-            MATCH (e:Text)-[:HAS_CONTRIBUTION]->(:Contribution)-[:BY]->(:Person {{id: $author_id}})
+    _FILTERED_TEXTS: LiteralString = """
+    CALL () {
+        WHEN $bdrc IS NOT NULL THEN { MATCH (e:Text {bdrc: $bdrc}) RETURN e }
+        WHEN $wiki IS NOT NULL THEN { MATCH (e:Text {wiki: $wiki}) RETURN e }
+        WHEN $author_id IS NOT NULL THEN {
+            MATCH (e:Text)-[:HAS_CONTRIBUTION]->(:Contribution)-[:BY]->(:Person {id: $author_id})
             RETURN DISTINCT e
-        }}
-        WHEN $category_id IS NOT NULL THEN {{
-            MATCH (e:Text)-[:TEXT_OF]->(:Work)-[:HAS_CATEGORY]->(:Category {{id: $category_id}}) RETURN e
-        }}
-        WHEN size($tag_ids) > 0 THEN {{
+        }
+        WHEN $category_id IS NOT NULL THEN {
+            MATCH (e:Text)-[:TEXT_OF]->(:Work)-[:HAS_CATEGORY]->(:Category {id: $category_id}) RETURN e
+        }
+        WHEN size($tag_ids) > 0 THEN {
             MATCH (e:Text)-[:TEXT_OF]->(w:Work)
             WHERE CASE $tag_id_match
-                WHEN 'all' THEN ALL(required_tag_id IN $tag_ids WHERE (w)-[:HAS_TAG]->(:Tag {{id: required_tag_id}}))
-                ELSE ANY(required_tag_id IN $tag_ids WHERE (w)-[:HAS_TAG]->(:Tag {{id: required_tag_id}}))
+                WHEN 'all' THEN ALL(required_tag_id IN $tag_ids WHERE (w)-[:HAS_TAG]->(:Tag {id: required_tag_id}))
+                ELSE ANY(required_tag_id IN $tag_ids WHERE (w)-[:HAS_TAG]->(:Tag {id: required_tag_id}))
             END
             RETURN e
-        }}
-        WHEN $language IS NOT NULL THEN {{
-            MATCH (e:Text)-[:HAS_LANGUAGE]->(:Language {{code: $language_base}}) RETURN e
-        }}
-        ELSE {{ MATCH (e:Text) RETURN e }}
-    }}
+        }
+        WHEN $language IS NOT NULL THEN {
+            MATCH (e:Text)-[:HAS_LANGUAGE]->(:Language {code: $language_base}) RETURN e
+        }
+        ELSE { MATCH (e:Text) RETURN e }
+    }
     WITH e
-    WHERE ($language IS NULL OR EXISTS {{
-          (e)-[r:HAS_LANGUAGE]->(lang:Language {{code: $language_base}})
+    WHERE ($language IS NULL OR EXISTS {
+          (e)-[r:HAS_LANGUAGE]->(lang:Language {code: $language_base})
           WHERE NOT $language CONTAINS '-' OR toLower(coalesce(r.bcp47, lang.code)) = $language
-      }})
-      AND ($category_id IS NULL OR (e)-[:TEXT_OF]->(:Work)-[:HAS_CATEGORY]->(:Category {{id: $category_id}}))
-      AND ($author_id IS NULL OR EXISTS {{
-          (e)-[:HAS_CONTRIBUTION]->(:Contribution)-[:BY]->(:Person {{id: $author_id}})
-      }})
+      })
+      AND ($category_id IS NULL OR (e)-[:TEXT_OF]->(:Work)-[:HAS_CATEGORY]->(:Category {id: $category_id}))
+      AND ($author_id IS NULL OR EXISTS {
+          (e)-[:HAS_CONTRIBUTION]->(:Contribution)-[:BY]->(:Person {id: $author_id})
+      })
       AND (
         size($tag_ids) = 0
         OR CASE $tag_id_match
             WHEN 'all' THEN ALL(
                 required_tag_id IN $tag_ids
-                WHERE (e)-[:TEXT_OF]->(:Work)-[:HAS_TAG]->(:Tag {{id: required_tag_id}})
+                WHERE (e)-[:TEXT_OF]->(:Work)-[:HAS_TAG]->(:Tag {id: required_tag_id})
             )
             ELSE ANY(
                 required_tag_id IN $tag_ids
-                WHERE (e)-[:TEXT_OF]->(:Work)-[:HAS_TAG]->(:Tag {{id: required_tag_id}})
+                WHERE (e)-[:TEXT_OF]->(:Work)-[:HAS_TAG]->(:Tag {id: required_tag_id})
             )
         END
       )
       AND ($wiki IS NULL OR e.wiki = $wiki)
+    """
+
+    GET_ALL_QUERY: LiteralString = f"""
+    {_FILTERED_TEXTS}
     ORDER BY e.id SKIP $offset LIMIT $limit
     RETURN {_TEXT_RETURN}
+    """
+
+    GET_LANGUAGES_QUERY: LiteralString = f"""
+    {_FILTERED_TEXTS}
+    MATCH (e)-[:HAS_LANGUAGE]->(l:Language)
+    RETURN l.code AS code, l.name AS name, count(DISTINCT e) AS text_count
+    ORDER BY code
     """
 
     UPDATE_LICENSE_QUERY: LiteralString = """
@@ -291,20 +303,34 @@ class TextDatabase:
                 TextDatabase.GET_ALL_QUERY,
                 offset=offset,
                 limit=limit,
-                language=filters.language,
-                language_base=filters.language.split("-")[0] if filters.language else None,
-                category_id=filters.category_id,
-                author_id=filters.author_id,
-                tag_ids=filters.tag_ids,
-                tag_id_match=filters.tag_id_match,
-                bdrc=filters.bdrc,
-                wiki=filters.wiki,
                 application=application,
+                **TextDatabase._filter_params(filters, filters.language),
             )
             return [TextOutput.model_validate(record["text"]) for record in await result.data()]
 
         async with self.session as session:
             return await session.execute_read(read)
+
+    async def get_languages(self, filters: TextFacetFilter) -> list[TextLanguageResponse]:
+        async def read(tx: AsyncManagedTransaction) -> list[TextLanguageResponse]:
+            result = await tx.run(TextDatabase.GET_LANGUAGES_QUERY, **TextDatabase._filter_params(filters))
+            return [TextLanguageResponse.model_validate(record) for record in await result.data()]
+
+        async with self.session as session:
+            return await session.execute_read(read)
+
+    @staticmethod
+    def _filter_params(filters: TextFacetFilter, language: str | None = None) -> dict[str, Any]:
+        return {
+            "language": language,
+            "language_base": language.split("-")[0] if language else None,
+            "category_id": filters.category_id,
+            "author_id": filters.author_id,
+            "tag_ids": filters.tag_ids,
+            "tag_id_match": filters.tag_id_match,
+            "bdrc": filters.bdrc,
+            "wiki": filters.wiki,
+        }
 
     async def create(self, text: TextInput, application: str | None = None) -> str:
         try:

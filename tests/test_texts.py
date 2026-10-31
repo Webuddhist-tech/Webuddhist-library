@@ -3,6 +3,7 @@
 
 Tests endpoints:
 - GET /v2/texts/ (get all texts with filtering and pagination)
+- GET /v2/texts/languages (languages of matching texts, with counts)
 - GET /v2/texts/{text_id} (get single text)
 - POST /v2/texts/ (create text)
 - GET /v2/texts/{text_id}/editions/ (get editions of a text)
@@ -466,6 +467,47 @@ class TestGetAllTextsV2:
         assert response.status_code == 200
         data = _items(response.json())
         assert len(data) == 0
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestGetTextLanguagesV2:
+    """Tests for GET /v2/texts/languages endpoint"""
+
+    async def test_counts_languages_within_category(self, client, test_database):
+        """Translations share their source's category and count under the base language code"""
+        other = CategoryInput.model_validate({"title": {"en": "Other"}})
+        other_id = await test_database.category.create(other, "test_application")
+
+        async def create(title: str, language: str, **fields) -> str:
+            text = TextInput.model_validate({"title": {language.split("-")[0]: title}, "language": language, **fields})
+            return await test_database.text.create(text)
+
+        root_id = await create("Root", "bo", category_id="category")
+        await create("Second", "bo", category_id="category")
+        await create("Translation", "en-US", translation_of=root_id)
+        await create("Elsewhere", "zh", category_id=other_id)
+
+        response = await client.get("/v2/texts/languages?category_id=category")
+
+        assert response.status_code == 200
+        assert response.json() == [
+            {"code": "bo", "name": "Tibetan", "text_count": 2},
+            {"code": "en", "name": "English", "text_count": 1},
+        ]
+        for language in response.json():
+            listed = await client.get(f"/v2/texts?category_id=category&language={language['code']}")
+            assert len(_items(listed.json())) == language["text_count"]
+
+    async def test_unknown_category_returns_empty_list(self, client, test_database):
+        response = await client.get("/v2/texts/languages?category_id=missing")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    async def test_rejects_language_filter(self, client, test_database):
+        response = await client.get("/v2/texts/languages?category_id=category&language=en")
+
+        assert response.status_code == 422
 
 
 @pytest.mark.asyncio(loop_scope="session")

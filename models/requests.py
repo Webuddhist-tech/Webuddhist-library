@@ -24,9 +24,7 @@ class AlignmentPaginationParams(AnnotationSegmentsPaginationParams):
     pass
 
 
-class TextFilter(OpenPechaModel):
-    language: LanguageFilter | None = None
-    title: NonEmptyStr | None = Field(default=None, min_length=2, description="Filter by title, minimum 2 characters")
+class TextFacetFilter(OpenPechaModel):
     category_id: str | None = None
     tag_id: str | None = Field(default=None, description="Comma-separated application tag IDs.")
     tag_id_match: Literal["all", "any"] = Field(default="all", description="Match all or any listed tag IDs.")
@@ -47,6 +45,11 @@ class TextFilter(OpenPechaModel):
     @property
     def tag_ids(self) -> list[str]:
         return self.tag_id.split(",") if self.tag_id else []
+
+
+class TextFilter(TextFacetFilter):
+    language: LanguageFilter | None = None
+    title: NonEmptyStr | None = Field(default=None, min_length=2, description="Filter by title, minimum 2 characters")
 
 
 class TextsQueryParams(PaginationParams, TextFilter):

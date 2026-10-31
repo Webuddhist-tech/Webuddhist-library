@@ -17,6 +17,10 @@ class LanguageResponse(OpenPechaModel):
     name: str
 
 
+class TextLanguageResponse(LanguageResponse):
+    text_count: int
+
+
 class ApplicationResponse(OpenPechaModel):
     id: str
     name: str

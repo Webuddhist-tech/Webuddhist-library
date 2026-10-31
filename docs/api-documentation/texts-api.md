@@ -10,6 +10,7 @@ This document provides comprehensive documentation for all Texts-related endpoin
 2. [Authentication](#authentication)
 3. [Text Endpoints](#text-endpoints)
   - [List All Texts](#list-all-texts)
+  - [List Text Languages](#list-text-languages)
   - [Get Text by ID](#get-text-by-id)
   - [Create New Text](#create-new-text)
   - [Update Text](#update-text)
@@ -160,6 +161,54 @@ curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/texts?tag_id=TAG123,TAG456" 
 curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/texts?tag_id=TAG123,TAG456&tag_id_match=any" \
   -H "X-API-Key: your_api_key" \
   -H "X-Application: webuddhist"
+```
+
+---
+
+### List Text Languages
+
+List the languages that texts matching the filters are available in, with a count per language. Use it to build a language picker that only offers languages with results, for example the languages of texts in one category.
+
+**Endpoint:**
+
+```
+GET /v2/texts/languages
+```
+
+**Parameters:**
+
+Accepts the [List All Texts](#list-all-texts) filters except `language`, `title`, `limit`, and `offset`: `category_id`, `tag_id`, `tag_id_match`, `author_id`, `bdrc`, and `wiki`. The filters behave exactly as they do on `GET /v2/texts`; in particular, `category_id` matches only that category, not its subcategories.
+
+**Response: 200 OK**
+
+```json
+[
+  { "code": "bo", "name": "Tibetan", "text_count": 42 },
+  { "code": "en", "name": "English", "text_count": 3 }
+]
+```
+
+- Languages are ordered by `code` and only appear when at least one text matches.
+- `code` is the base language code: texts tagged `en-US` count under `en`. Passing a returned `code` as `language` to `GET /v2/texts` with the same filters returns `text_count` texts.
+- Translations share the category of the text they translate, so they are counted in that category.
+- No pagination; an unknown `category_id` returns `[]`.
+
+**Error Responses:**
+
+- `401 Unauthorized`: Missing or invalid API key in deployed environments
+- `422 Validation Error`: Unsupported query parameter (such as `language`) or invalid `tag_id`
+- `500 Server Error`: Internal server error
+
+**Example Usage:**
+
+```bash
+# Languages of texts in a category
+curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/texts/languages?category_id=CAT12345678" \
+  -H "X-API-Key: your_api_key"
+
+# Then list the texts in one of those languages
+curl -X GET "https://api-l25bgmwqoa-uc.a.run.app/v2/texts?category_id=CAT12345678&language=bo" \
+  -H "X-API-Key: your_api_key"
 ```
 
 ---
