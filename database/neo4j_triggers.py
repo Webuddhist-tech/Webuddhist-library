@@ -1086,7 +1086,7 @@ async def install_triggers(driver: AsyncDriver) -> None:
                 "CALL apoc.trigger.install($database, $name, $statement, {phase: $phase})",
                 database=DATABASE_NAME,
                 name=trigger["name"],
-                statement=trigger["query"],
+                statement=f"CYPHER 25 {trigger['query']}",
                 phase=trigger["phase"],
             )
             logger.info("Installed trigger: %s — %s", trigger["name"], trigger["description"])
