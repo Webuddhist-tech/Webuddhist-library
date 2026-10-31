@@ -47,7 +47,8 @@ async def test_content_migration_refuses_missing_objects_and_invalid_spans(test_
     storage._storage.update(objects)
     async with db.get_session() as session:
         await (await session.run("""
-            MATCH (e:Edition {id: $id}), (kind:MarkType {name: 'yigchung'})
+            MATCH (e:Edition {id: $id})
+            MERGE (kind:MarkType {name: 'yigchung'})
             CREATE (m:Mark {id: 'bad'})-[:MARK_OF]->(e), (m)-[:HAS_TYPE]->(kind),
                    (:Span {start: 0, end: 999})-[:SPAN_OF]->(m)
         """, id=edition)).consume()

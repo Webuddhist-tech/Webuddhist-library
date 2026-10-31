@@ -1,11 +1,13 @@
 # ruff: noqa: ANN001, S101, SLF001
+import asyncio
 import re
 from dataclasses import dataclass
 
 import pytest
 
-from database.neo4j_triggers import DATABASE_NAME, SYSTEM_DATABASE_NAME, TRIGGERS, install_triggers
+from database.neo4j_triggers import SYSTEM_DATABASE_NAME, TRIGGERS, install_triggers
 from neo4j.exceptions import ClientError
+from tests.conftest import NEO4J_TRIGGER_REFRESH_SECONDS
 from tests.schema_contract import EXPECTED_TRIGGERS
 
 
@@ -272,18 +274,19 @@ async def test_each_trigger_rejects_intentional_invalid_data(test_database, case
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_install_triggers_replaces_stale_triggers(test_database) -> None:
-    driver = test_database._driver
+    driver, database = test_database._driver, test_database._database
     async with driver.session(database=SYSTEM_DATABASE_NAME) as session:
         result = await session.run(
             "CALL apoc.trigger.install($database, 'stale_trigger', 'RETURN 1', {phase: 'before'})",
-            database=DATABASE_NAME,
+            database=database,
         )
         await result.consume()
 
-    await install_triggers(driver)
+    await install_triggers(driver, database)
+    await asyncio.sleep(NEO4J_TRIGGER_REFRESH_SECONDS)
 
     async with driver.session(database=SYSTEM_DATABASE_NAME) as session:
-        result = await session.run("CALL apoc.trigger.show($database) YIELD name, query", database=DATABASE_NAME)
+        result = await session.run("CALL apoc.trigger.show($database) YIELD name, query", database=database)
         stored = {record["name"]: record["query"] async for record in result}
 
     assert set(stored) == {trigger["name"] for trigger in TRIGGERS}
