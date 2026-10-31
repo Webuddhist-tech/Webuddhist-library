@@ -53,7 +53,7 @@ class DatabaseValidator:
 
     @staticmethod
     async def validate_text_creation(tx: AsyncManagedTransaction, text: TextInput) -> None:
-        await DatabaseValidator.validate_text_title_unique(tx, dict(text.title.root))
+        await DatabaseValidator.validate_text_title_unique(tx, dict(text.title.root), text.language)
 
         await DatabaseValidator.validate_contribution_references(tx, text.contributions)
 
@@ -190,21 +190,26 @@ class DatabaseValidator:
             raise ForbiddenError("Tags belong to another application")
 
     @staticmethod
-    async def validate_text_title_unique(tx: AsyncManagedTransaction, title: dict[str, str]) -> None:
-        """Ensure no text exists with the same title text and language combination."""
-        if not title:
+    async def validate_text_title_unique(
+        tx: AsyncManagedTransaction, title: dict[str, str], text_language: str
+    ) -> None:
+        """Ensure no text in the same language has the same title text and language combination."""
+        base_language = text_language.split("-", maxsplit=1)[0].lower()
+        titles_list = [
+            {"text": text, "lang": lang} for lang, text in title.items() if lang.split("-")[0].lower() == base_language
+        ]
+        if not titles_list:
             return
 
         query = """
         UNWIND $titles AS item
-        MATCH (:Text)-[:HAS_TITLE]->(:Nomen)-[:HAS_LOCALIZATION]->(lt:LocalizedText {text: item.text})
-            -[rel:HAS_LANGUAGE]->(lang:Language)
+        MATCH (lang:Language)<-[:HAS_LANGUAGE]-(:Text)-[:HAS_TITLE]->(:Nomen)
+            -[:HAS_LOCALIZATION]->(lt:LocalizedText {text: item.text})-[rel:HAS_LANGUAGE]->(lang)
         WHERE toLower(coalesce(rel.bcp47, lang.code)) = toLower(item.lang)
         RETURN item.text AS text, item.lang AS lang
         LIMIT 1
         """
 
-        titles_list = [{"text": text, "lang": lang} for lang, text in title.items()]
         result = await tx.run(query, titles=titles_list)
         record = await result.single()
 

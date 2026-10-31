@@ -776,14 +776,14 @@ TRIGGERS.append(
 TRIGGERS.append(
     {
         "name": "enforce_text_title_unique",
-        "description": "Text title + language combination must be unique",
+        "description": "Text title + language combination must be unique among texts written in that language",
         "phase": "before",
         "query": """
         UNWIND $createdNodes AS candidate
         WITH DISTINCT candidate WHERE NOT candidate IN $deletedNodes
         MATCH (candidate)-[:HAS_TITLE|HAS_LOCALIZATION*0..2]->(node:LocalizedText)
-        WHERE EXISTS { (:Text)-[:HAS_TITLE]->(:Nomen)-[:HAS_LOCALIZATION]->(node) }
         MATCH (node)-[:HAS_LANGUAGE]->(language:Language)
+        WHERE EXISTS { (language)<-[:HAS_LANGUAGE]-(:Text)-[:HAS_TITLE]->(:Nomen)-[:HAS_LOCALIZATION]->(node) }
         WITH DISTINCT node, language ORDER BY language.code
         WITH collect(DISTINCT node) AS titles, collect(DISTINCT language) AS languages
         // Serialize title checks on existing language nodes before reading competing titles.
@@ -791,9 +791,8 @@ TRIGGERS.append(
         UNWIND titles AS node
         MATCH (node)-[rel:HAS_LANGUAGE]->(lang:Language)
         WITH node, toLower(coalesce(rel.bcp47, lang.code)) AS title_lang
-        MATCH (node)<-[:HAS_LOCALIZATION]-(:Nomen)<-[:HAS_TITLE]-(text_node:Text)
         MATCH (other:LocalizedText {text: node.text})-[other_rel:HAS_LANGUAGE]->(other_lang:Language)
-        MATCH (other)<-[:HAS_LOCALIZATION]-(:Nomen)<-[:HAS_TITLE]-(other_text:Text)
+        MATCH (other_lang)<-[:HAS_LANGUAGE]-(other_text:Text)-[:HAS_TITLE]->(:Nomen)-[:HAS_LOCALIZATION]->(other)
         WHERE toLower(coalesce(other_rel.bcp47, other_lang.code)) = title_lang
         WITH node.text AS text, title_lang AS lang, count(DISTINCT other_text) AS text_count
         WHERE text_count > 1
@@ -807,8 +806,8 @@ TRIGGERS.append(
         RETURN null
         """,
         "audit": """
-        MATCH (t:Text)-[:HAS_TITLE]->(n:Nomen)-[:HAS_LOCALIZATION]->(lt:LocalizedText)
-              -[rel:HAS_LANGUAGE]->(l:Language)
+        MATCH (l:Language)<-[:HAS_LANGUAGE]-(t:Text)-[:HAS_TITLE]->(:Nomen)-[:HAS_LOCALIZATION]->(lt:LocalizedText)
+              -[rel:HAS_LANGUAGE]->(l)
         WITH lt.text AS text, toLower(coalesce(rel.bcp47, l.code)) AS lang, count(DISTINCT t) AS cnt
         WHERE cnt > 1
         RETURN text + ':' + lang AS violating_id

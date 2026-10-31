@@ -651,6 +651,32 @@ class TestPostTextV2:
         assert "error" in response_2.json()
         assert "already exists" in response_2.json()["error"].lower()
 
+    @pytest.mark.parametrize("root_language,translation_language", [("bo", "en"), ("en", "bo")])
+    async def test_translation_may_reuse_title_its_root_carries_in_that_language(
+        self, client, root_language, translation_language
+    ):
+        """A root titled in both languages must not block its translation from reusing one of them."""
+        titles = {"bo": "སྙིང་པོ།", "en": "The Heart of Wisdom"}
+        shared = {translation_language: titles[translation_language]}
+        base = {"license": "cc0"}
+        root = await client.post(
+            "/v2/texts", json={**base, "title": titles, "language": root_language, "category_id": "category"}
+        )
+        assert root.status_code == 201
+
+        translation = await client.post(
+            "/v2/texts",
+            json={**base, "title": shared, "language": translation_language, "translation_of": root.json()["id"]},
+        )
+        assert translation.status_code == 201, translation.text
+
+        # Two texts written in that language still cannot share the title.
+        duplicate = await client.post(
+            "/v2/texts", json={**base, "title": shared, "language": translation_language, "category_id": "category"}
+        )
+        assert duplicate.status_code == 422
+        assert "already exists" in duplicate.json()["error"].lower()
+
     async def test_create_text_missing_json(self, client):
         """Test POST with no JSON data"""
 
